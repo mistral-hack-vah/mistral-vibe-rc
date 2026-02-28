@@ -1,4 +1,5 @@
 import os
+import sys
 import json
 import time
 import uuid
@@ -10,9 +11,18 @@ import jwt
 import httpx
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
+from simple_acp_client.sdk.client import (
+    PyACPSDKClient,
+    PyACPAgentOptions,
+    TextBlock,
+    ResultMessage,
+)
 
 from python.audio_processor import VoxtralAudioProcessor
 from python.vibe_executor import VibeExecutor
+
+# ACP subprocess transport is broken on Windows — use vibe -p there instead.
+USE_ACP = sys.platform != "win32"
 
 # ---------------------------------------------------------------------------
 # Config
@@ -29,23 +39,32 @@ AGENT_MODEL_URL = os.environ.get("AGENT_MODEL_URL")
 # ---------------------------------------------------------------------------
 SESSIONS: Dict[str, Dict[str, Any]] = {}
 
+# One persistent ACP client per session — maintains conversation history.
+ACP_CLIENTS: Dict[str, PyACPSDKClient] = {}
+
 # ---------------------------------------------------------------------------
 # Singletons — None at module-load so tests can monkeypatch before startup.
 # Created inside lifespan on real server start.
 # ---------------------------------------------------------------------------
 audio_processor: Optional[VoxtralAudioProcessor] = None
-vibe_executor: Optional[VibeExecutor] = None
 
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     """Initialize heavy singletons on startup; teardown on shutdown."""
-    global audio_processor, vibe_executor
+    from dotenv import load_dotenv
+    load_dotenv()
+    global audio_processor
     if audio_processor is None:   # tests inject a fake before startup
         audio_processor = VoxtralAudioProcessor()
-    if vibe_executor is None:
-        vibe_executor = VibeExecutor()
     yield
+    # Disconnect all ACP clients on shutdown
+    for client in list(ACP_CLIENTS.values()):
+        try:
+            await client.disconnect()
+        except Exception:
+            pass
+    ACP_CLIENTS.clear()
 
 
 # ---------------------------------------------------------------------------
@@ -261,7 +280,7 @@ async def handle_final_text(
             agent_parts.append(delta_line)
             await ws_send(websocket, "agent_delta", {"text": delta_line})
     except Exception as e:
-        await ws_send(websocket, "error", {"message": f"Agent error: {e}"})
+        await ws_send(websocket, "error", {"message": f"Agent error: {type(e).__name__}: {e}"})
 
     session["turns"].append(
         {"role": "assistant", "text": "\n".join(agent_parts), "ts": int(time.time())}
@@ -296,12 +315,25 @@ async def extract_command(text: str, session_id: str) -> Dict[str, Any]:
     return {"intent": "chat", "args": {"text": text}}
 
 
+async def get_or_create_acp_client(session_id: str) -> PyACPSDKClient:
+    """Return the persistent ACP client for this session, creating it if needed."""
+    if session_id not in ACP_CLIENTS:
+        options = PyACPAgentOptions(
+            cwd=os.getcwd(),
+            env={**os.environ, "PYTHONUTF8": "1"},
+        )
+        client = PyACPSDKClient(options)
+        await client.connect(["vibe-acp"])
+        ACP_CLIENTS[session_id] = client
+    return ACP_CLIENTS[session_id]
+
+
 async def run_agent_stream(cmd: Dict[str, Any], session_id: str):
     """
-    Yield text lines from the agent.
+    Yield text lines from the agent via ACP (vibe-acp).
 
     If AGENT_MODEL_URL is set → single HTTP call, yield one line.
-    Otherwise → stream Mistral Vibe CLI output line-by-line.
+    Otherwise → stream via simple-acp-client connected to vibe-acp.
     """
     if AGENT_MODEL_URL:
         data = await call_http_json(
@@ -313,17 +345,20 @@ async def run_agent_stream(cmd: Dict[str, Any], session_id: str):
             yield output
         return
 
-    # Build command text for the Vibe CLI
-    intent = cmd.get("intent", "chat")
-    args = cmd.get("args", {})
-    if intent == "chat":
-        command_text = args.get("text", "")
-    else:
-        args_str = " ".join(f"--{k} {v}" for k, v in args.items())
-        command_text = f"{intent} {args_str}".strip()
+    # Pass the original spoken text directly — vibe understands natural language
+    command_text = cmd.get("args", {}).get("text") or cmd.get("intent", "")
 
-    async for line in vibe_executor.execute(command_text, session_id=session_id):
-        yield line
+    if USE_ACP:
+        client = await get_or_create_acp_client(session_id)
+        await client.query(command_text)
+        async for message in client.receive_messages():
+            if isinstance(message, TextBlock) and message.text:
+                yield message.text
+    else:
+        # Windows fallback: vibe -p (subprocess, no persistent session)
+        executor = VibeExecutor()
+        async for line in executor.execute(command_text, session_id=session_id):
+            yield line
 
 
 # ---------------------------------------------------------------------------

@@ -76,11 +76,10 @@ class FakeAudioProcessor:
         return {"partial": None, "final": None}
 
 
-class FakeVibeExecutor:
-    """Mock for the Mistral Vibe CLI bridge."""
-    async def execute(self, command_text: str, session_id: str) -> AsyncIterator[str]:
-        yield f"[fake-vibe] Executing: {command_text}"
-        yield "Success"
+async def fake_run_agent_stream(cmd, session_id):
+    """Fake ACP stream — no vibe-acp process needed."""
+    yield f"[fake-vibe] Executing: {cmd.get('args', {}).get('text', cmd.get('intent', ''))}"
+    yield "Success"
 
 
 def make_token(user_id: str, *, secret=None, issuer=None, exp_offset=3600) -> str:
@@ -109,11 +108,10 @@ def _drain_session_event(ws) -> dict:
 
 @pytest.fixture(autouse=True)
 def patch_singletons(monkeypatch):
-    """Inject fakes so no Voxtral API key or CLI is required."""
+    """Inject fakes so no Voxtral API key or vibe-acp process is required."""
     fake_processor = FakeAudioProcessor()
-    fake_executor = FakeVibeExecutor()
     monkeypatch.setattr(main, "audio_processor", fake_processor)
-    monkeypatch.setattr(main, "vibe_executor", fake_executor)
+    monkeypatch.setattr(main, "run_agent_stream", fake_run_agent_stream)
     # Also clear SESSIONS between tests to avoid cross-test state
     main.SESSIONS.clear()
     return fake_processor
