@@ -115,7 +115,7 @@ export function Sidebar({ visible, onClose }: SidebarProps) {
               </Text>
             </View>
 
-            <Pressable className="flex-row items-center gap-3 px-4 py-2">
+            <Pressable className="flex-row items-center gap-3 px-4 py-3">
               <IconSymbol name="folder.badge.plus" size={20} color="#b9b9ba" />
               <Text className="text-sm text-text-secondary">New project</Text>
             </Pressable>
@@ -123,7 +123,7 @@ export function Sidebar({ visible, onClose }: SidebarProps) {
             {PROJECTS.map((project) => (
               <Pressable
                 key={project.id}
-                className="flex-row items-center px-4 py-2"
+                className="flex-row items-center px-4 py-3"
               >
                 <IconSymbol name="folder" size={20} color="#b9b9ba" />
                 <Text className="flex-1 ml-3 text-sm text-text-primary">
@@ -146,7 +146,7 @@ export function Sidebar({ visible, onClose }: SidebarProps) {
                   {groupSessions.map((session) => (
                     <Pressable
                       key={session.id}
-                      className={`mx-2 px-3 py-2 rounded-button ${
+                      className={`mx-2 px-3 py-3 rounded-button ${
                         session.active ? 'bg-bg-button' : ''
                       }`}
                     >
@@ -176,7 +176,7 @@ export function Sidebar({ visible, onClose }: SidebarProps) {
           <View className="px-3 pt-3 pb-1">
             <Pressable
               onPress={onClose}
-              className="flex-row items-center justify-center gap-2 bg-accent rounded-button py-2.5"
+              className="flex-row items-center justify-center gap-2 bg-accent rounded-button py-3.5"
             >
               <IconSymbol name="bubble.left" size={18} color="#fff" />
               <Text className="text-sm font-semibold text-white">
