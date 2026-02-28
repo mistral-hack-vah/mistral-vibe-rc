@@ -9,12 +9,12 @@ const MistralDarkTheme = {
   ...DarkTheme,
   colors: {
     ...DarkTheme.colors,
-    primary: '#F5631A',
-    background: '#080808',
-    card: '#111111',
-    text: '#F4F4F4',
+    primary: '#e65d2d',
+    background: '#18181b',
+    card: '#18181b',
+    text: '#ffffff',
     border: 'rgba(255,255,255,0.07)',
-    notification: '#F5631A',
+    notification: '#e65d2d',
   },
 };
 
@@ -32,8 +32,8 @@ export default function RootLayout() {
           options={{
             presentation: 'modal',
             title: 'Modal',
-            headerStyle: { backgroundColor: '#111111' },
-            headerTintColor: '#F4F4F4',
+            headerStyle: { backgroundColor: '#222225' },
+            headerTintColor: '#ffffff',
           }}
         />
       </Stack>
