@@ -3,4 +3,12 @@ name = "vibe-remote-control"
 version = "0.1.0"
 description = "Add your description here"
 requires-python = ">=3.12"
-dependencies = []
+dependencies = [
+    "fastapi>=0.134.0",
+    "httpx>=0.28.1",
+    "numpy>=2.4.2",
+    "openai-whisper>=20250625",
+    "pyjwt>=2.11.0",
+    "pytest>=9.0.2",
+    "uvicorn>=0.41.0",
+]
