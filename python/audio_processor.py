@@ -83,7 +83,7 @@ class VoxtralAudioProcessor:
         if not api_key:
             raise RuntimeError("MISTRAL_API_KEY environment variable is not set.")
 
-        self.model = os.environ.get("VOXTRAL_MODEL", "voxtral-mini-2602")
+        self.model = os.environ.get("VOXTRAL_MODEL", "voxtral-mini-2602")    # for realtime we have voxtral-mini-transcribe-realtime-2602
         self._client = Mistral(api_key=api_key)
 
         # session_id → SessionState
