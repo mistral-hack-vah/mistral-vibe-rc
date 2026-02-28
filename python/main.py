@@ -3,6 +3,7 @@ import json
 import time
 import uuid
 import asyncio
+from contextlib import asynccontextmanager
 from typing import Dict, Any, Optional
 
 import jwt
@@ -10,22 +11,50 @@ import httpx
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 
-from python.audio_processor import AudioProcessor
+from python.audio_processor import VoxtralAudioProcessor
+from python.vibe_executor import VibeExecutor
 
-# -----------------------------
+# ---------------------------------------------------------------------------
 # Config
-# -----------------------------
+# ---------------------------------------------------------------------------
 JWT_SECRET = os.environ.get("JWT_SECRET", "dev-secret-change-me")
 JWT_ISSUER = os.environ.get("JWT_ISSUER", "voice-agent-api")
 
-# Your deployed model endpoints (internal services)
-# - ASR is local here (whisper), but agent/LLM should be remote for scaling.
-COMMAND_MODEL_URL = os.environ.get("COMMAND_MODEL_URL")  # optional
-AGENT_MODEL_URL = os.environ.get("AGENT_MODEL_URL")      # optional
+# Optional HTTP endpoints — override the built-in Vibe bridge
+COMMAND_MODEL_URL = os.environ.get("COMMAND_MODEL_URL")
+AGENT_MODEL_URL = os.environ.get("AGENT_MODEL_URL")
 
+# ---------------------------------------------------------------------------
+# Sessions  (swap to Redis for multi-instance deployments)
+# ---------------------------------------------------------------------------
+SESSIONS: Dict[str, Dict[str, Any]] = {}
+
+# ---------------------------------------------------------------------------
+# Singletons — None at module-load so tests can monkeypatch before startup.
+# Created inside lifespan on real server start.
+# ---------------------------------------------------------------------------
+audio_processor: Optional[VoxtralAudioProcessor] = None
+vibe_executor: Optional[VibeExecutor] = None
+
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    """Initialize heavy singletons on startup; teardown on shutdown."""
+    global audio_processor, vibe_executor
+    if audio_processor is None:   # tests inject a fake before startup
+        audio_processor = VoxtralAudioProcessor()
+    if vibe_executor is None:
+        vibe_executor = VibeExecutor()
+    yield
+
+
+# ---------------------------------------------------------------------------
+# App
+# ---------------------------------------------------------------------------
 app = FastAPI(
-    title="Real-Time Voice Agent",
-    description="Real-time audio -> transcript -> command -> agent response"
+    title="Mistral Vibe — Voice Agent API",
+    description="Real-time audio → Voxtral STT → Mistral Vibe CLI",
+    lifespan=lifespan,
 )
 
 app.add_middleware(
@@ -36,70 +65,73 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# -----------------------------
-# Sessions (swap to Redis later)
-# -----------------------------
-SESSIONS: Dict[str, Dict[str, Any]] = {}  # session_id -> session dict
-
-
+# ---------------------------------------------------------------------------
+# Auth helper
+# ---------------------------------------------------------------------------
 def verify_jwt(token: str) -> str:
-    """Return user_id (sub) if token valid, else raise."""
-    payload = jwt.decode(token, JWT_SECRET, algorithms=["HS256"], issuer=JWT_ISSUER)
+    """Return user_id (sub claim) if the token is valid, else raise."""
+    payload = jwt.decode(
+        token, JWT_SECRET, algorithms=["HS256"], issuer=JWT_ISSUER
+    )
     return payload["sub"]
 
 
-async def call_http_json(url: str, payload: Dict[str, Any], timeout: float = 60.0) -> Dict[str, Any]:
+# ---------------------------------------------------------------------------
+# HTTP helpers
+# ---------------------------------------------------------------------------
+async def call_http_json(
+    url: str, payload: Dict[str, Any], timeout: float = 60.0
+) -> Dict[str, Any]:
     async with httpx.AsyncClient(timeout=timeout) as client:
         r = await client.post(url, json=payload)
         r.raise_for_status()
         return r.json()
 
 
-# -----------------------------
-# Load whisper model via your AudioProcessor
-# -----------------------------
-# You already have this; keep it. Internally, make AudioProcessor do:
-# - bytes -> PCM float32
-# - VAD + buffering
-# - whisper decode on rolling window
-audio_processor = AudioProcessor()  # let it load model inside, or pass model
-
-
-# -----------------------------
-# WS protocol helpers
-# -----------------------------
-async def ws_send(websocket: WebSocket, event: str, data: Dict[str, Any]):
+# ---------------------------------------------------------------------------
+# WebSocket send helper
+# ---------------------------------------------------------------------------
+async def ws_send(websocket: WebSocket, event: str, data: Dict[str, Any]) -> None:
     await websocket.send_text(json.dumps({"event": event, "data": data}))
 
 
-# -----------------------------
-# WebSocket endpoint (single definition!)
-# -----------------------------
+# ---------------------------------------------------------------------------
+# WebSocket endpoint
+# ---------------------------------------------------------------------------
 @app.websocket("/ws/audio")
 async def ws_audio(websocket: WebSocket):
     """
     Real-time audio streaming endpoint.
 
-    Auth:
-      - Pass JWT as query: /ws/audio?token=...
-        OR as header: Authorization: Bearer <token>
+    Auth
+    ----
+    Pass a JWT either as a query parameter:  /ws/audio?token=<JWT>
+    or as an HTTP header:                    Authorization: Bearer <JWT>
 
-    Client sends:
-      - binary frames: raw PCM16 mono 16k OR Opus etc (match your AudioProcessor)
-      - text frames: JSON {"type":"control", ...} for start/stop/reset, etc.
+    Client → Server frames
+    ----------------------
+    Binary  — raw PCM16 mono 16 kHz audio chunk
+    Text    — JSON control message:
+                {"type": "control", "action": "reset"}   # discard buffer
+                {"type": "control", "action": "stop"}    # flush + finalize
 
-    Server sends:
-      - {"event":"partial_transcript", "data":{"text":...}}
-      - {"event":"final_transcript", "data":{"text":...}}
-      - {"event":"command", "data":{...}}
-      - {"event":"agent_delta", "data":{"text":...}}  (if you stream agent)
+    Server → Client events
+    ----------------------
+    {"event": "session",            "data": {"session_id": "..."}}
+    {"event": "partial_transcript", "data": {"text": "..."}}
+    {"event": "final_transcript",   "data": {"text": "..."}}
+    {"event": "command",            "data": {"intent": "...", "args": {...}}}
+    {"event": "agent_delta",        "data": {"text": "..."}}
+    {"event": "state",              "data": {"status": "reset"|"stopped"|...}}
+    {"event": "error",              "data": {"message": "..."}}
     """
-    # ---- Authenticate
+
+    # ---- Authenticate -------------------------------------------------------
     token = websocket.query_params.get("token")
     if not token:
-        auth = websocket.headers.get("authorization") or ""
-        if auth.lower().startswith("bearer "):
-            token = auth.split(" ", 1)[1].strip()
+        auth_header = websocket.headers.get("authorization", "")
+        if auth_header.lower().startswith("bearer "):
+            token = auth_header.split(" ", 1)[1].strip()
 
     if not token:
         await websocket.close(code=4401)
@@ -113,9 +145,10 @@ async def ws_audio(websocket: WebSocket):
 
     await websocket.accept()
 
-    # ---- Session init
+    # ---- Session ------------------------------------------------------------
     session_id = websocket.query_params.get("session_id") or str(uuid.uuid4())
     session = SESSIONS.get(session_id)
+
     if not session:
         session = {
             "session_id": session_id,
@@ -130,17 +163,19 @@ async def ws_audio(websocket: WebSocket):
 
     await ws_send(websocket, "session", {"session_id": session_id})
 
-    # ---- Real-time loop
+    # ---- Real-time loop -----------------------------------------------------
     try:
         while True:
             msg = await websocket.receive()
 
-            # Text control messages
+            # ----------------------------------------------------------------
+            # Text frame → control message
+            # ----------------------------------------------------------------
             if msg.get("text") is not None:
                 try:
                     payload = json.loads(msg["text"])
                 except Exception:
-                    await ws_send(websocket, "error", {"message": "Invalid JSON control message"})
+                    await ws_send(websocket, "error", {"message": "Invalid JSON"})
                     continue
 
                 if payload.get("type") == "control":
@@ -149,43 +184,44 @@ async def ws_audio(websocket: WebSocket):
                         audio_processor.reset(session_id=session_id)
                         await ws_send(websocket, "state", {"status": "reset"})
                     elif action == "stop":
-                        # force finalize any buffered speech
                         final_text = await audio_processor.finalize(session_id=session_id)
                         if final_text:
                             await handle_final_text(websocket, session, final_text)
                         await ws_send(websocket, "state", {"status": "stopped"})
                     else:
-                        await ws_send(websocket, "state", {"status": "unknown_control", "action": action})
+                        await ws_send(
+                            websocket, "state",
+                            {"status": "unknown_control", "action": action}
+                        )
                 else:
                     await ws_send(websocket, "error", {"message": "Unknown message type"})
                 continue
 
-            # Binary audio frames
+            # ----------------------------------------------------------------
+            # Binary frame → audio chunk
+            # ----------------------------------------------------------------
             if msg.get("bytes") is not None:
-                audio_chunk = msg["bytes"]
-
-                # process_audio should return dict like:
-                # {
-                #   "partial": "some text" or None,
-                #   "final": "final text" or None
-                # }
-
-                # inside ws loop receiving bytes...
-                out = await audio_processor.process_audio(audio_chunk, session_id=session_id)
+                audio_chunk: bytes = msg["bytes"]
+                out = await audio_processor.process_audio(
+                    audio_chunk, session_id=session_id
+                )
 
                 partial = out.get("partial")
                 if partial:
-                    await websocket.send_text(json.dumps({"event": "partial_transcript", "text": partial}))
+                    await ws_send(websocket, "partial_transcript", {"text": partial})
 
                 final = out.get("final")
                 if final:
-                    await websocket.send_text(json.dumps({"event": "final_transcript", "text": final}))
+                    # Emits final_transcript + command + agent_delta events
+                    await handle_final_text(websocket, session, final)
 
     except WebSocketDisconnect:
-        # normal close
         return
     except Exception as e:
-        await ws_send(websocket, "error", {"message": str(e)})
+        try:
+            await ws_send(websocket, "error", {"message": str(e)})
+        except Exception:
+            pass
     finally:
         try:
             await websocket.close()
@@ -193,56 +229,116 @@ async def ws_audio(websocket: WebSocket):
             pass
 
 
-# -----------------------------
-# Final transcript -> command -> agent
-# -----------------------------
-async def handle_final_text(websocket: WebSocket, session: Dict[str, Any], final_text: str):
-    session["turns"].append({"role": "user", "text": final_text, "ts": int(time.time())})
+# ---------------------------------------------------------------------------
+# Pipeline: final transcript → NLU command → Vibe CLI
+# ---------------------------------------------------------------------------
+
+async def handle_final_text(
+    websocket: WebSocket,
+    session: Dict[str, Any],
+    final_text: str,
+) -> None:
+    """
+    Called when Voxtral produces a final transcript for an utterance.
+
+    1. Emit final_transcript event to the client
+    2. Extract a structured command (NLU)
+    3. Stream the Mistral Vibe CLI response back as agent_delta events
+    """
+    session["turns"].append(
+        {"role": "user", "text": final_text, "ts": int(time.time())}
+    )
     await ws_send(websocket, "final_transcript", {"text": final_text})
 
-    # 1) Extract structured command (either local heuristic or model)
+    # Step 1: Extract structured command
     cmd = await extract_command(final_text, session_id=session["session_id"])
     await ws_send(websocket, "command", cmd)
 
-    # 2) Run agent/model to produce response
-    response_text = await run_agent(cmd, session_id=session["session_id"])
-    session["turns"].append({"role": "assistant", "text": response_text, "ts": int(time.time())})
-    await ws_send(websocket, "agent_delta", {"text": response_text})
+    # Step 2: Stream Vibe CLI / agent response
+    agent_parts: list[str] = []
+    try:
+        async for delta_line in run_agent_stream(cmd, session_id=session["session_id"]):
+            agent_parts.append(delta_line)
+            await ws_send(websocket, "agent_delta", {"text": delta_line})
+    except Exception as e:
+        await ws_send(websocket, "error", {"message": f"Agent error: {e}"})
+
+    session["turns"].append(
+        {"role": "assistant", "text": "\n".join(agent_parts), "ts": int(time.time())}
+    )
 
 
 async def extract_command(text: str, session_id: str) -> Dict[str, Any]:
-    # If you have a command model deployed, call it.
-    if COMMAND_MODEL_URL:
-        payload = {
-            "session_id": session_id,
-            "text": text,
-            "schema": {
-                "intent": "string",
-                "args": "object"
-            }
-        }
-        return await call_http_json(COMMAND_MODEL_URL, payload)
+    """
+    Convert a raw transcript into a structured command dict.
 
-    # Fallback heuristic (replace later)
+    Uses COMMAND_MODEL_URL if configured, otherwise a keyword heuristic.
+    """
+    if COMMAND_MODEL_URL:
+        return await call_http_json(
+            COMMAND_MODEL_URL,
+            {
+                "session_id": session_id,
+                "text": text,
+                "schema": {"intent": "string", "args": "object"},
+            },
+        )
+
     t = text.lower()
-    if "run tests" in t:
+    if "run test" in t or "run the test" in t:
         return {"intent": "run_tests", "args": {"target": "all"}}
     if "build" in t:
         return {"intent": "build", "args": {}}
+    if "deploy" in t:
+        return {"intent": "deploy", "args": {}}
+    if "status" in t or "what" in t:
+        return {"intent": "status", "args": {}}
     return {"intent": "chat", "args": {"text": text}}
 
 
-async def run_agent(cmd: Dict[str, Any], session_id: str) -> str:
-    # If you have an agent model deployed, call it.
+async def run_agent_stream(cmd: Dict[str, Any], session_id: str):
+    """
+    Yield text lines from the agent.
+
+    If AGENT_MODEL_URL is set → single HTTP call, yield one line.
+    Otherwise → stream Mistral Vibe CLI output line-by-line.
+    """
     if AGENT_MODEL_URL:
-        payload = {"session_id": session_id, "command": cmd}
-        data = await call_http_json(AGENT_MODEL_URL, payload)
-        return data.get("output_text", "")
+        data = await call_http_json(
+            AGENT_MODEL_URL,
+            {"session_id": session_id, "command": cmd},
+        )
+        output = data.get("output_text", "")
+        if output:
+            yield output
+        return
 
-    # Fallback stub
-    return f"[stub-agent] Received intent={cmd.get('intent')} args={cmd.get('args')}"
+    # Build command text for the Vibe CLI
+    intent = cmd.get("intent", "chat")
+    args = cmd.get("args", {})
+    if intent == "chat":
+        command_text = args.get("text", "")
+    else:
+        args_str = " ".join(f"--{k} {v}" for k, v in args.items())
+        command_text = f"{intent} {args_str}".strip()
+
+    async for line in vibe_executor.execute(command_text, session_id=session_id):
+        yield line
 
 
+# ---------------------------------------------------------------------------
+# Health check
+# ---------------------------------------------------------------------------
+@app.get("/health")
+async def health() -> Dict[str, str]:
+    model = audio_processor.model if audio_processor else "not-initialized"
+    return {"status": "ok", "model": model}
+
+
+# ---------------------------------------------------------------------------
+# Entry point (local dev)
+# ---------------------------------------------------------------------------
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
+
+    uvicorn.run("python.main:app", host="0.0.0.0", port=8000, reload=True)

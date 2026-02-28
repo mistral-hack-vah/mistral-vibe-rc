@@ -110,5 +110,7 @@ def test_ws_audio_reset_control(client):
 
 def test_ws_audio_rejects_missing_token(client):
     with pytest.raises(Exception):
-        # should close with 4401, TestClient raises on connect
-        client.websocket_connect("/ws/audio?session_id=s1")
+        # The server closes with code 4401 before accepting; TestClient raises
+        # only when the connection is actually attempted (inside `with`).
+        with client.websocket_connect("/ws/audio?session_id=s1"):
+            pass
