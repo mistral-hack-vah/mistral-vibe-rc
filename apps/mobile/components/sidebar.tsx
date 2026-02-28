@@ -1,27 +1,33 @@
 import { useEffect, useRef } from 'react';
 import { Animated, Dimensions, TouchableWithoutFeedback } from 'react-native';
-import { View, Text, Pressable } from '@/src/tw';
+import { View, Text, Pressable, ScrollView, TextInput } from '@/src/tw';
 import { IconSymbol } from '@/components/ui/icon-symbol';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { useRouter, usePathname } from 'expo-router';
 
 const SIDEBAR_WIDTH = 280;
-const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
 type SidebarProps = {
   visible: boolean;
   onClose: () => void;
 };
 
-const NAV_ITEMS = [
-  { label: 'Home', icon: 'house.fill' as const, route: '/(tabs)' as const },
-  { label: 'Settings', icon: 'gearshape.fill' as const, route: '/(tabs)/explore' as const },
+const PROJECTS = [
+  { id: '1', name: 'Jest', sessions: [] },
+  { id: '2', name: 'test', sessions: [] },
 ];
+
+const SESSIONS = [
+  { id: '1', title: 'Python Summarizer', group: 'Today', active: true },
+  { id: '2', title: 'Python Function Creation', group: 'Today' },
+  { id: '3', title: 'French Language Assistance', group: 'Today' },
+  { id: '4', title: 'Implement new feature', group: 'Previous 7 days' },
+  { id: '5', title: 'Python: Subsequence Count', group: 'Previous 30 days' },
+];
+
+const SESSION_GROUPS = ['Today', 'Previous 7 days', 'Previous 30 days'];
 
 export function Sidebar({ visible, onClose }: SidebarProps) {
   const insets = useSafeAreaInsets();
-  const router = useRouter();
-  const pathname = usePathname();
 
   const translateX = useRef(new Animated.Value(-SIDEBAR_WIDTH)).current;
   const overlayOpacity = useRef(new Animated.Value(0)).current;
@@ -56,11 +62,6 @@ export function Sidebar({ visible, onClose }: SidebarProps) {
     }
   }, [visible]);
 
-  const handleNav = (route: string) => {
-    router.navigate(route as any);
-    onClose();
-  };
-
   return (
     <View
       className="absolute inset-0 z-50"
@@ -88,63 +89,119 @@ export function Sidebar({ visible, onClose }: SidebarProps) {
           width: SIDEBAR_WIDTH,
           backgroundColor: '#111115',
           transform: [{ translateX }],
-          paddingTop: insets.top + 16,
-          paddingBottom: insets.bottom + 16,
+          paddingTop: insets.top + 8,
+          paddingBottom: insets.bottom + 8,
         }}
       >
-        {/* App title */}
-        <View className="px-5 mb-6">
-          <Text className="text-[22px] font-bold text-accent tracking-tight">
-            Le Thread
-          </Text>
-          <Text className="text-[11px] text-text-secondary mt-0.5">
-            Vibe on the go
-          </Text>
-        </View>
+        <View className="flex-1">
+          {/* Search bar */}
+          <View className="px-4 pt-2 pb-3">
+            <View className="flex-row items-center bg-bg-button rounded-input px-3 h-10">
+              <IconSymbol name="magnifyingglass" size={18} color="#b9b9ba" />
+              <TextInput
+                className="flex-1 ml-2 text-sm text-text-primary"
+                placeholder="Search"
+                placeholderTextColor="#b9b9ba"
+              />
+            </View>
+          </View>
 
-        {/* Nav items */}
-        <View className="px-3 gap-1">
-          {NAV_ITEMS.map((item) => {
-            const isActive =
-              (item.route === '/(tabs)' && pathname === '/') ||
-              (item.route === '/(tabs)/explore' && pathname === '/explore');
+          {/* Scrollable content */}
+          <ScrollView className="flex-1" contentContainerClassName="pb-4">
+            {/* Projects section */}
+            <View className="px-4 pt-2 pb-1">
+              <Text className="text-xs font-semibold text-accent uppercase tracking-wider">
+                Projects
+              </Text>
+            </View>
 
-            return (
+            <Pressable className="flex-row items-center gap-3 px-4 py-2">
+              <IconSymbol name="folder.badge.plus" size={20} color="#b9b9ba" />
+              <Text className="text-sm text-text-secondary">New project</Text>
+            </Pressable>
+
+            {PROJECTS.map((project) => (
               <Pressable
-                key={item.label}
-                onPress={() => handleNav(item.route)}
-                className={`flex-row items-center gap-3 px-3 py-2.5 rounded-button ${
-                  isActive ? 'bg-accent/10' : ''
-                }`}
+                key={project.id}
+                className="flex-row items-center px-4 py-2"
               >
-                <IconSymbol
-                  name={item.icon}
-                  size={20}
-                  color={isActive ? '#e65d2d' : '#b9b9ba'}
-                />
-                <Text
-                  className={`text-[14px] font-medium ${
-                    isActive ? 'text-accent' : 'text-text-secondary'
-                  }`}
-                >
-                  {item.label}
+                <IconSymbol name="folder" size={20} color="#b9b9ba" />
+                <Text className="flex-1 ml-3 text-sm text-text-primary">
+                  {project.name}
                 </Text>
+                <IconSymbol name="chevron.right" size={16} color="#b9b9ba" />
               </Pressable>
-            );
-          })}
-        </View>
+            ))}
 
-        {/* New chat button */}
-        <View className="px-3 mt-4">
-          <Pressable
-            onPress={onClose}
-            className="flex-row items-center gap-2.5 bg-accent rounded-button px-3.5 py-2.5"
-          >
-            <IconSymbol name="plus" size={18} color="#fff" />
-            <Text className="text-[13px] font-semibold text-white">
-              New Thread
-            </Text>
-          </Pressable>
+            {/* Sessions grouped by date */}
+            {SESSION_GROUPS.map((group) => {
+              const groupSessions = SESSIONS.filter((s) => s.group === group);
+              if (groupSessions.length === 0) return null;
+
+              return (
+                <View key={group} className="mt-4">
+                  <Text className="px-4 pb-1 text-xs text-text-secondary">
+                    {group}
+                  </Text>
+                  {groupSessions.map((session) => (
+                    <Pressable
+                      key={session.id}
+                      className={`mx-2 px-3 py-2 rounded-button ${
+                        session.active ? 'bg-bg-button' : ''
+                      }`}
+                    >
+                      <Text
+                        className="text-sm text-text-primary"
+                        numberOfLines={1}
+                      >
+                        {session.title}
+                      </Text>
+                    </Pressable>
+                  ))}
+                </View>
+              );
+            })}
+
+            {/* End indicator */}
+            <View className="items-center py-6">
+              <Text className="text-xs text-text-secondary">
+                ᵔ^._.^ᵔ You've reached the end!
+              </Text>
+            </View>
+          </ScrollView>
+
+          {/* Bottom pinned section */}
+          <View className="border-t border-border-subtle" />
+
+          <View className="px-3 pt-3 pb-1">
+            <Pressable
+              onPress={onClose}
+              className="flex-row items-center justify-center gap-2 bg-accent rounded-button py-2.5"
+            >
+              <IconSymbol name="bubble.left" size={18} color="#fff" />
+              <Text className="text-sm font-semibold text-white">
+                New Thread
+              </Text>
+            </Pressable>
+          </View>
+
+          {/* Settings row */}
+          <View className="flex-row items-center px-4 py-3">
+            <View className="w-8 h-8 rounded-full bg-bg-button items-center justify-center">
+              <Text className="text-xs font-bold text-text-primary">VR</Text>
+            </View>
+            <View className="flex-1 ml-3">
+              <Text className="text-sm font-semibold text-text-primary">
+                Personal
+              </Text>
+              <Text className="text-xs text-text-secondary">
+                Le Chat Free
+              </Text>
+            </View>
+            <Pressable className="p-1">
+              <IconSymbol name="ellipsis" size={20} color="#b9b9ba" />
+            </Pressable>
+          </View>
         </View>
       </Animated.View>
     </View>

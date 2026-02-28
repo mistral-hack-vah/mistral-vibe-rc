@@ -26,6 +26,11 @@ const MAPPING = {
   'gearshape.fill': 'settings',
   'lightbulb.fill': 'lightbulb',
   'hammer.fill': 'build',
+  'magnifyingglass': 'search',
+  'folder': 'folder',
+  'folder.badge.plus': 'create-new-folder',
+  'bubble.left': 'chat-bubble-outline',
+  'ellipsis': 'more-horiz',
 } as IconMapping;
 
 /**
