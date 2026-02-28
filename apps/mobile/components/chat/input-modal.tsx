@@ -10,7 +10,6 @@ import {
   ExpoAudioStreamModule,
   type AudioRecording,
   type RecordingConfig,
-  type AudioStreamStatus,
 } from '@siteed/expo-audio-studio';
 import { AudioVisualizer } from '@siteed/expo-audio-ui';
 import { useAudioSocket } from '@/hooks/use-audio-socket';
@@ -133,16 +132,30 @@ export function InputModal({ onSend, onAudioRecorded }: InputModalProps) {
 
     await startRecording({
       ...RECORDING_CONFIG,
-      onAudioStream: (evt: AudioStreamStatus) => {
-        if (evt.data) {
-          // evt.data is base64-encoded PCM — decode to binary
-          const binaryString = atob(evt.data);
-          const bytes = new Uint8Array(binaryString.length);
-          for (let i = 0; i < binaryString.length; i++) {
-            bytes[i] = binaryString.charCodeAt(i);
+      onAudioStream: async (evt) => {
+        if (!evt.data) return;
+        let buffer: ArrayBuffer;
+        if (typeof evt.data !== 'string') {
+          // Web: convert Float32Array to 16-bit PCM
+          const pcm = new Int16Array(evt.data.length);
+          for (let i = 0; i < evt.data.length; i++) {
+            const s = Math.max(-1, Math.min(1, evt.data[i]));
+            pcm[i] = s < 0 ? s * 0x8000 : s * 0x7fff;
           }
-          audioSocket.sendBinary(bytes.buffer);
+          buffer = pcm.buffer;
+        } else {
+          // Native: base64-encoded PCM string
+          const bin = atob(evt.data);
+          const bytes = new Uint8Array(bin.length);
+          for (let i = 0; i < bin.length; i++) {
+            bytes[i] = bin.charCodeAt(i);
+          }
+          buffer = bytes.buffer;
         }
+        // Skip tiny metadata/header chunks — real audio is ≥1000 bytes
+        if (buffer.byteLength < 1000) return;
+        console.log(`[mic] chunk ${buffer.byteLength} bytes`);
+        audioSocket.sendBinary(buffer);
       },
     });
   }, [startRecording, audioSocket, controlStatus]);
