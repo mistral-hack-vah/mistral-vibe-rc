@@ -26,11 +26,10 @@ export default function ExploreScreen() {
           {SETTINGS_ITEMS.map((item, i) => (
             <Pressable
               key={item.label}
-              className={`flex-row items-center justify-between px-3.5 py-3 ${
-                i < SETTINGS_ITEMS.length - 1 ? 'border-b border-border-subtle' : ''
-              }`}>
+              className={`flex-row items-center justify-between px-3.5 py-3 ${i < SETTINGS_ITEMS.length - 1 ? 'border-b border-border-subtle' : ''
+                }`}>
               <View className="flex-row items-center gap-2.5">
-                <View className="size-[30px] rounded-lg bg-accent-secondary/15 items-center justify-center">
+                <View className="size-7.5 rounded-lg bg-accent-secondary/15 items-center justify-center">
                   <Text className="text-accent-secondary text-sm">&#9881;</Text>
                 </View>
                 <Text className="text-[13px] font-medium text-text-primary">{item.label}</Text>
@@ -89,9 +88,8 @@ export default function ExploreScreen() {
           {['Gmail', 'Google Calendar', 'Google Drive'].map((name, i) => (
             <Pressable
               key={name}
-              className={`flex-row items-center justify-between px-3.5 py-3 ${
-                i < 2 ? 'border-b border-border-subtle' : ''
-              }`}>
+              className={`flex-row items-center justify-between px-3.5 py-3 ${i < 2 ? 'border-b border-border-subtle' : ''
+                }`}>
               <Text className="text-[13px] font-medium text-text-primary">{name}</Text>
               <View className="size-6 rounded-md bg-accent-blue/15 items-center justify-center">
                 <Text className="text-accent-blue text-xs">+</Text>
