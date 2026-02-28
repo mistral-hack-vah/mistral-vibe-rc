@@ -28,6 +28,9 @@ importers:
       '@react-navigation/native':
         specifier: ^7.1.8
         version: 7.1.31(react-native@0.81.5(@babel/core@7.29.0)(@types/react@19.1.17)(react@19.1.0))(react@19.1.0)
+      '@siteed/expo-audio-studio':
+        specifier: ^2.18.5
+        version: 2.18.5(expo@54.0.33)(react-native@0.81.5(@babel/core@7.29.0)(@types/react@19.1.17)(react@19.1.0))(react@19.1.0)
       '@tailwindcss/postcss':
         specifier: ^4.2.1
         version: 4.2.1
@@ -56,8 +59,8 @@ importers:
         specifier: ~3.0.11
         version: 3.0.11(expo@54.0.33)(react-native-web@0.21.2(react-dom@19.1.0(react@19.1.0))(react@19.1.0))(react-native@0.81.5(@babel/core@7.29.0)(@types/react@19.1.17)(react@19.1.0))(react@19.1.0)
       expo-image-picker:
-        specifier: ^55.0.10
-        version: 55.0.10(expo@54.0.33)
+        specifier: ^17.0.10
+        version: 17.0.10(expo@54.0.33)
       expo-linking:
         specifier: ~8.0.11
         version: 8.0.11(expo@54.0.33)(react-native@0.81.5(@babel/core@7.29.0)(@types/react@19.1.17)(react@19.1.0))(react@19.1.0)
@@ -2093,6 +2096,13 @@ packages:
   '@sinonjs/fake-timers@10.3.0':
     resolution: {integrity: sha512-V4BG07kuYSUkTCSBHG8G8TNhM+F19jXFWnQtzj+we8DrkpSBCee9Z3Ms8yiGer/dlmhe35/Xdgyo3/0rQKg7YA==}
 
+  '@siteed/expo-audio-studio@2.18.5':
+    resolution: {integrity: sha512-rsfxYENprzrIiArNDozT9/vgoVPrHUVOmaCZToKNqWHq4UYpNzp9tvQFdDA4AiydyEnzQAjRWVEK/18yEm6BJA==}
+    peerDependencies:
+      expo: '>=52.0.0'
+      react: '*'
+      react-native: '*'
+
   '@smithy/abort-controller@4.2.10':
     resolution: {integrity: sha512-qocxM/X4XGATqQtUkbE9SPUB6wekBi+FyJOMbPj0AhvyvFGYEmOlz6VB22iMePCQsFmMIvFSeViDvA7mZJG47g==}
     engines: {node: '>=18.0.0'}
@@ -3531,13 +3541,13 @@ packages:
     peerDependencies:
       expo: '*'
 
-  expo-image-loader@55.0.0:
-    resolution: {integrity: sha512-NOjp56wDrfuA5aiNAybBIjqIn1IxKeGJ8CECWZncQ/GzjZfyTYAHTCyeApYkdKkMBLHINzI4BbTGSlbCa0fXXQ==}
+  expo-image-loader@6.0.0:
+    resolution: {integrity: sha512-nKs/xnOGw6ACb4g26xceBD57FKLFkSwEUTDXEDF3Gtcu3MqF3ZIYd3YM+sSb1/z9AKV1dYT7rMSGVNgsveXLIQ==}
     peerDependencies:
       expo: '*'
 
-  expo-image-picker@55.0.10:
-    resolution: {integrity: sha512-uspDWjNBNjUD//MLzu7oEtT9cuNgW5pd6HxPfAJffRIdkdCUCYxLYXRp5pfB6JtW640eCdvm2QEQrQC172Y62g==}
+  expo-image-picker@17.0.10:
+    resolution: {integrity: sha512-a2xrowp2trmvXyUWgX3O6Q2rZaa2C59AqivKI7+bm+wLvMfTEbZgldLX4rEJJhM8xtmEDTNU+lzjtObwzBRGaw==}
     peerDependencies:
       expo: '*'
 
@@ -7991,6 +8001,12 @@ snapshots:
     dependencies:
       '@sinonjs/commons': 3.0.1
 
+  '@siteed/expo-audio-studio@2.18.5(expo@54.0.33)(react-native@0.81.5(@babel/core@7.29.0)(@types/react@19.1.17)(react@19.1.0))(react@19.1.0)':
+    dependencies:
+      expo: 54.0.33(@babel/core@7.29.0)(@expo/dom-webview@55.0.3)(@expo/metro-runtime@6.1.2)(expo-router@6.0.23)(react-native@0.81.5(@babel/core@7.29.0)(@types/react@19.1.17)(react@19.1.0))(react@19.1.0)
+      react: 19.1.0
+      react-native: 0.81.5(@babel/core@7.29.0)(@types/react@19.1.17)(react@19.1.0)
+
   '@smithy/abort-controller@4.2.10':
     dependencies:
       '@smithy/types': 4.13.0
@@ -9716,14 +9732,14 @@ snapshots:
     dependencies:
       expo: 54.0.33(@babel/core@7.29.0)(@expo/dom-webview@55.0.3)(@expo/metro-runtime@6.1.2)(expo-router@6.0.23)(react-native@0.81.5(@babel/core@7.29.0)(@types/react@19.1.17)(react@19.1.0))(react@19.1.0)
 
-  expo-image-loader@55.0.0(expo@54.0.33):
+  expo-image-loader@6.0.0(expo@54.0.33):
     dependencies:
       expo: 54.0.33(@babel/core@7.29.0)(@expo/dom-webview@55.0.3)(@expo/metro-runtime@6.1.2)(expo-router@6.0.23)(react-native@0.81.5(@babel/core@7.29.0)(@types/react@19.1.17)(react@19.1.0))(react@19.1.0)
 
-  expo-image-picker@55.0.10(expo@54.0.33):
+  expo-image-picker@17.0.10(expo@54.0.33):
     dependencies:
       expo: 54.0.33(@babel/core@7.29.0)(@expo/dom-webview@55.0.3)(@expo/metro-runtime@6.1.2)(expo-router@6.0.23)(react-native@0.81.5(@babel/core@7.29.0)(@types/react@19.1.17)(react@19.1.0))(react@19.1.0)
-      expo-image-loader: 55.0.0(expo@54.0.33)
+      expo-image-loader: 6.0.0(expo@54.0.33)
 
   expo-image@3.0.11(expo@54.0.33)(react-native-web@0.21.2(react-dom@19.1.0(react@19.1.0))(react@19.1.0))(react-native@0.81.5(@babel/core@7.29.0)(@types/react@19.1.17)(react@19.1.0))(react@19.1.0):
     dependencies:

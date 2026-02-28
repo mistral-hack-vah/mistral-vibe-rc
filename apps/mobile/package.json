@@ -5,10 +5,11 @@
   "scripts": {
     "start": "expo start",
     "reset-project": "node ./scripts/reset-project.js",
-    "android": "expo start --android",
-    "ios": "expo start --ios",
+    "android": "expo run:android",
+    "ios": "expo run:ios",
     "web": "expo start --web",
-    "lint": "expo lint"
+    "lint": "expo lint",
+    "prebuild": "expo prebuild"
   },
   "dependencies": {
     "@expo/vector-icons": "^15.0.3",
@@ -16,6 +17,7 @@
     "@react-navigation/bottom-tabs": "^7.4.0",
     "@react-navigation/elements": "^2.6.3",
     "@react-navigation/native": "^7.1.8",
+    "@siteed/expo-audio-studio": "^2.18.5",
     "@tailwindcss/postcss": "^4.2.1",
     "clsx": "^2.1.1",
     "expo": "~54.0.33",
@@ -25,7 +27,7 @@
     "expo-font": "~14.0.11",
     "expo-haptics": "~15.0.8",
     "expo-image": "~3.0.11",
-    "expo-image-picker": "^55.0.10",
+    "expo-image-picker": "^17.0.10",
     "expo-linking": "~8.0.11",
     "expo-router": "~6.0.23",
     "expo-splash-screen": "~31.0.13",
@@ -54,5 +56,10 @@
     "eslint-config-expo": "~10.0.0",
     "typescript": "~5.9.2"
   },
-  "private": true
+  "private": true,
+  "expo": {
+    "plugins": [
+      "@siteed/expo-audio-studio"
+    ]
+  }
 }
