@@ -1,0 +1,22 @@
+{
+  "name": "server-cli",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "build": "tsc",
+    "start": "node dist/index.js"
+  },
+  "dependencies": {
+    "hono": "^4.6.0",
+    "@hono/node-server": "^1.13.0",
+    "commander": "^12.1.0",
+    "@hackathon/shared": "workspace:*",
+    "@hackathon/db": "workspace:*",
+    "@hackathon/ai": "workspace:*"
+  },
+  "devDependencies": {
+    "tsx": "^4.19.0",
+    "typescript": "^5.6.0"
+  }
+}

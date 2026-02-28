@@ -1,0 +1,2 @@
+- use `pnpm` instead of `npm`
+- use `uv` for python env management

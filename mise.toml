@@ -1,0 +1,8 @@
+[tools]
+node = "22"
+pnpm = "latest"
+python = "3.13"
+uv = "latest"
+
+[env]
+NODE_ENV = "development"

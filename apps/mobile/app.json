@@ -1,0 +1,8 @@
+{
+  "expo": {
+    "name": "hackathon-mobile",
+    "slug": "hackathon-mobile",
+    "version": "1.0.0",
+    "platforms": ["ios", "android"]
+  }
+}
