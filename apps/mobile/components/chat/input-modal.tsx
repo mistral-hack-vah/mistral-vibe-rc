@@ -3,6 +3,16 @@ import { View, Text, TextInput, Pressable, ScrollView } from '@/src/tw';
 import { IconSymbol } from '@/components/ui/icon-symbol';
 import { ModeSelector } from './mode-selector';
 
+const pressStyle = ({ pressed }: { pressed: boolean }) => ({
+  opacity: pressed ? 0.85 : 1,
+  transform: [{ scale: pressed ? 0.88 : 1 }],
+  shadowColor: '#e65d2d',
+  shadowOffset: { width: 0, height: 0 },
+  shadowOpacity: pressed ? 0.5 : 0,
+  shadowRadius: pressed ? 10 : 0,
+  elevation: pressed ? 8 : 0,
+});
+
 type InputModalProps = {
   onSend: (text: string) => void;
   onAttach?: () => void;
@@ -63,6 +73,7 @@ export function InputModal({ onSend, onAttach, onMicPress }: InputModalProps) {
         <View className="flex-row items-center">
           <Pressable
             onPress={onAttach}
+            style={pressStyle}
             className="size-[34px] rounded-lg bg-bg-button items-center justify-center"
           >
             <IconSymbol name="plus" size={20} color="#e5e5e5" />
@@ -73,12 +84,14 @@ export function InputModal({ onSend, onAttach, onMicPress }: InputModalProps) {
           <View className="flex-1" />
           <Pressable
             onPress={onMicPress}
+            style={pressStyle}
             className="size-9 items-center justify-center"
           >
             <IconSymbol name="mic.fill" size={20} color="#b9b9ba" />
           </Pressable>
           <Pressable
             onPress={handleSend}
+            style={pressStyle}
             className="size-9 rounded-[10px] bg-accent items-center justify-center ml-1.5"
           >
             <IconSymbol name="arrow.up" size={20} color="#fff" />

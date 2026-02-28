@@ -3,6 +3,16 @@ import { Animated, Modal, TouchableWithoutFeedback } from 'react-native';
 import { View, Text, Pressable } from '@/src/tw';
 import { IconSymbol } from '@/components/ui/icon-symbol';
 
+const pressStyle = ({ pressed }: { pressed: boolean }) => ({
+  opacity: pressed ? 0.85 : 1,
+  transform: [{ scale: pressed ? 0.92 : 1 }],
+  shadowColor: '#e65d2d',
+  shadowOffset: { width: 0, height: 0 },
+  shadowOpacity: pressed ? 0.5 : 0,
+  shadowRadius: pressed ? 10 : 0,
+  elevation: pressed ? 8 : 0,
+});
+
 type ModeSelectorProps = {
   mode: 'plan' | 'build';
   onModeChange: (mode: 'plan' | 'build') => void;
@@ -50,6 +60,7 @@ export function ModeSelector({ mode, onModeChange }: ModeSelectorProps) {
           measureButton();
           setOpen(true);
         }}
+        style={pressStyle}
         className={`flex-row items-center gap-1.5 h-[34px] px-2.5 rounded-lg ${current.bgClass}`}
       >
         <IconSymbol name={current.icon} size={14} color={current.color} />
@@ -77,6 +88,7 @@ export function ModeSelector({ mode, onModeChange }: ModeSelectorProps) {
                   <Pressable
                     key={key}
                     onPress={() => handleSelect(key)}
+                    style={pressStyle}
                     className={`flex-row items-center gap-2.5 px-3 py-2.5 ${
                       isSelected ? cfg.bgClass : ''
                     }`}
