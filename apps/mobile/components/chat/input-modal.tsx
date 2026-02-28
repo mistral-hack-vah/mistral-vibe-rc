@@ -98,6 +98,7 @@ export function InputModal({ onSend, onAudioRecorded }: InputModalProps) {
       let amp = 0;
       if (typeof event.data !== 'string') {
         // Web: convert Float32Array to 16-bit PCM
+
         const pcm = new Int16Array(event.data.length);
         for (let i = 0; i < event.data.length; i++) {
           const s = Math.max(-1, Math.min(1, event.data[i]));
@@ -105,9 +106,10 @@ export function InputModal({ onSend, onAudioRecorded }: InputModalProps) {
         }
         buffer = pcm.buffer;
 
+        const data = event.data as unknown as Int16Array
         let sum = 0;
-        for (let i = 0; i < pcm.length; i++) sum += (pcm[i] / 32768) ** 2;
-        amp = Math.min(1, Math.sqrt(sum / pcm.length) * 6);
+        for (let i = 0; i < data.length; i++) sum += (data[i] / 32768) ** 2;
+        amp = Math.min(1, Math.sqrt(sum / data.length) * 6);
       } else {
         // Native: base64-encoded PCM string
         const bin = atob(event.data);
