@@ -14,9 +14,9 @@ export default function HomeScreen() {
   return (
     <View className="flex-1 bg-bg-base" style={{ paddingTop: insets.top }}>
       <KeyboardAvoidingView
-        className="flex-1"
-        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-        keyboardVerticalOffset={0}
+        style={{ flex: 1 }}
+        behavior="padding"
+        keyboardVerticalOffset={insets.top}
       >
         <ChatHeader
           onSidebarPress={() => setSidebarOpen(true)}

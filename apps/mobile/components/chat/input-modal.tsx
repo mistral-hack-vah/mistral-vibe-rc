@@ -51,7 +51,7 @@ export function InputModal({ onSend, onAttach, onMicPress }: InputModalProps) {
         {/* Prompt input */}
         <TextInput
           className="text-[15px] text-text-primary min-h-[28px] mb-2.5"
-          placeholder='Ask anything... "Refactor this function to be more readable"'
+          placeholder='Ask anything...'
           placeholderTextColor="#b9b9ba"
           value={text}
           onChangeText={setText}
