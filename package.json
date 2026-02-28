@@ -8,7 +8,13 @@
     "build:ios": "pnpm --filter mobile ios",
     "build:android": "pnpm --filter mobile android",
     "build:server": "pnpm --filter server build",
-    "dev": "pnpm run dev:web & pnpm run dev:server"
+    "dev": "pnpm run dev:web & pnpm run dev:server",
+    "test": "vitest"
+  },
+  "devDependencies": {
+    "vitest": "^3.0.0",
+    "ws": "^8.18.0",
+    "@types/ws": "^8.18.0"
   },
   "pnpm": {
     "overrides": {
