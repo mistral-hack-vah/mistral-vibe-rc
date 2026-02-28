@@ -1,10 +1,17 @@
-import { useState } from 'react';
+import { useState, useCallback } from 'react';
 import { View, Text, TextInput, Pressable, ScrollView } from '@/src/tw';
 import { Image } from '@/src/tw/image';
 import { IconSymbol } from '@/components/ui/icon-symbol';
 import { ModeSelector } from './mode-selector';
 import * as ImagePicker from 'expo-image-picker';
 import type { Attachment } from './types';
+import {
+  useAudioRecorder,
+  ExpoAudioStreamModule,
+  type AudioRecording,
+  type RecordingConfig,
+} from '@siteed/expo-audio-studio';
+import { AudioVisualizer } from '@siteed/expo-audio-ui';
 
 const pressStyle = ({ pressed }: { pressed: boolean }) => ({
   opacity: pressed ? 0.85 : 1,
@@ -18,13 +25,36 @@ const pressStyle = ({ pressed }: { pressed: boolean }) => ({
 
 type InputModalProps = {
   onSend: (text: string, attachments: Attachment[]) => void;
-  onMicPress?: () => void;
+  onAudioRecorded?: (recording: AudioRecording) => void;
 };
 
-export function InputModal({ onSend, onMicPress }: InputModalProps) {
+const RECORDING_CONFIG: RecordingConfig = {
+  interval: 500,
+  enableProcessing: true,
+  sampleRate: 44100,
+  channels: 1,
+  encoding: 'pcm_16bit',
+  output: {
+    primary: { enabled: true },
+    compressed: { enabled: false, format: 'aac', bitrate: 128000 },
+  },
+  autoResumeAfterInterruption: false,
+  bufferDurationSeconds: 0.1,
+};
+
+export function InputModal({ onSend, onAudioRecorded }: InputModalProps) {
   const [text, setText] = useState('');
   const [mode, setMode] = useState<'plan' | 'build'>('plan');
   const [attachments, setAttachments] = useState<Attachment[]>([]);
+  const [autosend, setAutosend] = useState(true);
+
+  const {
+    startRecording,
+    stopRecording,
+    isRecording,
+    analysisData,
+    durationMs,
+  } = useAudioRecorder();
 
   const handleSend = () => {
     const trimmed = text.trim();
@@ -33,6 +63,22 @@ export function InputModal({ onSend, onMicPress }: InputModalProps) {
     setText('');
     setAttachments([]);
   };
+
+  const handleMicPress = useCallback(async () => {
+    const { status } = await ExpoAudioStreamModule.requestPermissionsAsync();
+    if (status !== 'granted') return;
+    await startRecording(RECORDING_CONFIG);
+  }, [startRecording]);
+
+  const handleCancelRecording = useCallback(async () => {
+    await stopRecording();
+    // discard — don't fire onAudioRecorded
+  }, [stopRecording]);
+
+  const handleSendRecording = useCallback(async () => {
+    const result = await stopRecording();
+    onAudioRecorded?.(result);
+  }, [stopRecording, onAudioRecorded]);
 
   const pickImage = async () => {
     const result = await ImagePicker.launchImageLibraryAsync({
@@ -57,6 +103,140 @@ export function InputModal({ onSend, onMicPress }: InputModalProps) {
     setAttachments((prev) => prev.filter((_, i) => i !== index));
   };
 
+  const formatDuration = (ms: number) => {
+    const secs = Math.floor(ms / 1000);
+    const mins = Math.floor(secs / 60);
+    const remaining = secs % 60;
+    return `${mins}:${remaining.toString().padStart(2, '0')}`;
+  };
+
+  // ─── Recording UI ───
+  if (isRecording) {
+    return (
+      <View className="px-4 pb-2">
+        <View className="bg-bg-modal border border-border-soft rounded-2xl px-3.5 pt-4 pb-3">
+          {/* Waveform visualizer */}
+          <View className="items-center mb-3">
+            {analysisData ? (
+              <AudioVisualizer
+                audioData={analysisData}
+                canvasHeight={64}
+                candleWidth={6}
+                candleSpace={3}
+                mode="live"
+                showDottedLine={false}
+                showRuler={false}
+                showYAxis={false}
+                showNavigation={false}
+                showSelectedCandle={false}
+                showReferenceLine={false}
+                amplitudeScaling="humanVoice"
+                theme={{
+                  container: {},
+                  navigationContainer: {},
+                  canvasContainer: {},
+                  referenceLine: {},
+                  text: {},
+                  button: {},
+                  buttonText: {},
+                  dottedLineColor: 'transparent',
+                  yAxis: { tickColor: 'transparent', labelColor: 'transparent' },
+                  timeRuler: {
+                    tickColor: 'transparent',
+                    labelColor: 'transparent',
+                  },
+                  candle: {
+                    activeAudioColor: '#7cd659',
+                    activeSpeechColor: '#4ade80',
+                    offcanvasColor: '#3a5a2e',
+                  },
+                }}
+              />
+            ) : (
+              <View className="h-[64px] justify-center items-center">
+                <View className="flex-row items-center gap-1.5">
+                  {Array.from({ length: 11 }).map((_, i) => {
+                    const center = 5;
+                    const dist = Math.abs(i - center);
+                    const size = Math.max(4, 12 - dist * 2);
+                    return (
+                      <View
+                        key={i}
+                        style={{
+                          width: size,
+                          height: size,
+                          borderRadius: size / 2,
+                          backgroundColor:
+                            dist === 0 ? '#4ade80' : '#7cd659',
+                          opacity: 1 - dist * 0.08,
+                        }}
+                      />
+                    );
+                  })}
+                </View>
+              </View>
+            )}
+          </View>
+
+          {/* Duration */}
+          <Text className="text-center text-text-secondary text-xs mb-3">
+            {formatDuration(durationMs)}
+          </Text>
+
+          {/* Bottom row: cancel, autosend, send */}
+          <View className="flex-row items-center">
+            {/* Cancel button */}
+            <Pressable
+              onPress={handleCancelRecording}
+              style={pressStyle}
+              className="size-[44px] rounded-xl bg-bg-button items-center justify-center"
+            >
+              <IconSymbol name="xmark" size={18} color="#b9b9ba" />
+            </Pressable>
+
+            {/* Autosend toggle */}
+            <View className="flex-1 flex-row items-center justify-center">
+              <Text className="text-text-primary text-[15px] font-medium mr-2">
+                Autosend
+              </Text>
+              <Pressable
+                onPress={() => setAutosend((v) => !v)}
+                style={{
+                  backgroundColor: autosend
+                    ? 'rgba(230, 93, 45, 0.25)'
+                    : 'rgba(255,255,255,0.1)',
+                  paddingHorizontal: 8,
+                  paddingVertical: 3,
+                  borderRadius: 6,
+                }}
+              >
+                <Text
+                  style={{
+                    color: autosend ? '#e65d2d' : '#b9b9ba',
+                    fontSize: 13,
+                    fontWeight: '700',
+                  }}
+                >
+                  {autosend ? 'ON' : 'OFF'}
+                </Text>
+              </Pressable>
+            </View>
+
+            {/* Send button */}
+            <Pressable
+              onPress={handleSendRecording}
+              style={pressStyle}
+              className="size-[44px] rounded-xl bg-accent items-center justify-center"
+            >
+              <IconSymbol name="arrow.up" size={20} color="#fff" />
+            </Pressable>
+          </View>
+        </View>
+      </View>
+    );
+  }
+
+  // ─── Default text input UI ───
   return (
     <View className="px-4 pb-2">
       <View className="bg-bg-modal border border-border-soft rounded-2xl px-3.5 pt-3 pb-2.5">
@@ -117,7 +297,7 @@ export function InputModal({ onSend, onMicPress }: InputModalProps) {
           </View>
           <View className="flex-1" />
           <Pressable
-            onPress={onMicPress}
+            onPress={handleMicPress}
             style={pressStyle}
             className="size-9 items-center justify-center"
           >
