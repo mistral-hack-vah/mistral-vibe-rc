@@ -4,7 +4,7 @@ tests/test_ws_audio.py
 Unit tests (no MISTRAL_API_KEY needed — FakeAudioProcessor is injected):
   - partial + final transcript event shape
   - reset control
-  - stop control (triggers finalize)
+  - stop 2ntrol (triggers finalize)
   - unknown control action
   - invalid JSON text frame
   - missing token → 4401
@@ -17,11 +17,15 @@ Unit tests (no MISTRAL_API_KEY needed — FakeAudioProcessor is injected):
 
 Integration test (requires MISTRAL_API_KEY — skipped otherwise):
   - VoxtralAudioProcessor.process_audio with real PCM audio
+
+Integration test (requires mistral-vibe on PATH — skipped otherwise):
+  - VibeExecutor streams real output from the CLI against the current codebase
 """
 
 import io
 import json
 import os
+import shutil
 import time
 import uuid
 import wave
@@ -475,3 +479,53 @@ class TestVoxtralIntegration:
         processor.reset(session_id="nonexistent")
         # Reset again — still safe
         processor.reset(session_id="nonexistent")
+
+
+# ===========================================================================
+# Integration test — skipped without mistral-vibe on PATH
+# Runs against the current working directory (the repo root when using pytest).
+# ===========================================================================
+
+requires_vibe_cli = pytest.mark.skipif(
+    shutil.which("vibe") is None,
+    reason="vibe CLI not on PATH — skipping live Vibe executor test",
+)
+
+
+@requires_vibe_cli
+class TestVibeExecutorIntegration:
+    """
+    These tests spawn the real mistral-vibe CLI.
+    They are skipped automatically when mistral-vibe is not installed.
+
+    The CLI inherits the CWD of the pytest process (repo root), so it
+    operates on this codebase.
+    """
+
+    @pytest.mark.asyncio
+    async def test_executor_returns_output(self):
+        """CLI should produce at least one line of output for a simple prompt."""
+        from python.vibe_executor import VibeExecutor
+        executor = VibeExecutor()
+        lines = [line async for line in executor.execute("list the files in this project", session_id="vibe-int-1")]
+        assert len(lines) > 0, "Expected at least one output line from mistral-vibe"
+
+    @pytest.mark.asyncio
+    async def test_executor_output_is_strings(self):
+        """Every yielded line should be a non-empty string."""
+        from python.vibe_executor import VibeExecutor
+        executor = VibeExecutor()
+        lines = [line async for line in executor.execute("what is this project?", session_id="vibe-int-2")]
+        assert all(isinstance(l, str) and len(l) > 0 for l in lines)
+
+    @pytest.mark.asyncio
+    async def test_executor_completes_without_error(self):
+        """CLI should exit cleanly (return code 0) for a benign query."""
+        from python.vibe_executor import VibeExecutor
+        executor = VibeExecutor()
+        # If the CLI exits non-zero, execute() raises RuntimeError
+        try:
+            async for _ in executor.execute("describe the python directory", session_id="vibe-int-3"):
+                pass
+        except RuntimeError as e:
+            pytest.fail(f"VibeExecutor raised RuntimeError: {e}")

@@ -2,10 +2,9 @@
 """
 Mistral Vibe CLI bridge.
 
-`VibeExecutor.execute()` spawns the `mistral-vibe` CLI (or any compatible
-binary configured via VIBE_CLI_PATH) as an async subprocess, feeds it a
-command text via stdin, and yields stdout lines back to the WebSocket
-handler as `agent_delta` events.
+`VibeExecutor.execute()` spawns the `vibe` CLI (or any compatible
+binary configured via VIBE_CLI_PATH) in programmatic mode (`-p`), and
+yields stdout lines back to the WebSocket handler as `agent_delta` events.
 
 Usage example:
     executor = VibeExecutor()
@@ -24,12 +23,12 @@ class VibeExecutor:
     Async subprocess wrapper around the Mistral Vibe CLI.
 
     Config via env vars:
-        VIBE_CLI_PATH   — path/name of the CLI binary (default: "mistral-vibe")
+        VIBE_CLI_PATH   — path/name of the CLI binary (default: "vibe")
         VIBE_TIMEOUT    — max seconds to wait for a response (default: 60)
     """
 
     def __init__(self) -> None:
-        self.cli_path = os.environ.get("VIBE_CLI_PATH", "mistral-vibe")
+        self.cli_path = os.environ.get("VIBE_CLI_PATH", "vibe")
         self.timeout = float(os.environ.get("VIBE_TIMEOUT", "60"))
 
     async def execute(
@@ -46,23 +45,16 @@ class VibeExecutor:
         Raises:
             RuntimeError  — if the CLI exits with a non-zero code.
         """
+        env = os.environ.copy()
+        env["PYTHONUTF8"] = "1"
         proc = await asyncio.create_subprocess_exec(
             self.cli_path,
-            "--no-color",      # avoid ANSI escape codes in streamed output
-            stdin=subprocess.PIPE,
+            "-p", command_text.strip(),
+            "--output", "text",
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
+            env=env,
         )
-
-        # Write the command and signal EOF on stdin
-        try:
-            cmd_bytes = (command_text.strip() + "\n").encode()
-            proc.stdin.write(cmd_bytes)
-            await proc.stdin.drain()
-            proc.stdin.close()
-        except (BrokenPipeError, ConnectionResetError):
-            # Process may have already exited
-            pass
 
         # Stream stdout line by line with an overall timeout
         deadline = asyncio.get_event_loop().time() + self.timeout
