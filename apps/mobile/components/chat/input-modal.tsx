@@ -1,10 +1,11 @@
 import { useState, useCallback, useRef } from 'react';
 import Animated, {
-  useSharedValue,
   useAnimatedStyle,
   withSpring,
+  makeMutable,
   type SharedValue,
 } from 'react-native-reanimated';
+import { LinearGradient } from 'expo-linear-gradient';
 import { View, Text, TextInput, Pressable, ScrollView } from '@/src/tw';
 import { Image } from '@/src/tw/image';
 import { IconSymbol } from '@/components/ui/icon-symbol';
@@ -18,14 +19,34 @@ import {
   type RecordingConfig,
 } from '@siteed/expo-audio-studio';
 
-const BAR_VARIATIONS = [0.5, 0.9, 1.0, 0.8, 0.6, 0.75];
+const BAR_COUNT = 14;
+const BAR_VARIATIONS = Array.from({ length: BAR_COUNT }, (_, i) => {
+  const center = (BAR_COUNT - 1) / 2;
+  return 0.45 + 0.55 * Math.sin((i / (BAR_COUNT - 1)) * Math.PI);
+});
 
 function VoiceBar({ sv }: { sv: SharedValue<number> }) {
-  const style = useAnimatedStyle(() => ({ height: sv.value }));
+  const style = useAnimatedStyle(() => ({
+    height: sv.value,
+    shadowOpacity: sv.value > 12 ? 0.75 : 0,
+    shadowRadius: sv.value > 12 ? 6 : 0,
+  }));
   return (
     <Animated.View
-      style={[{ flex: 1, borderRadius: 3, backgroundColor: '#7cd659' }, style]}
-    />
+      style={[{
+        // flex: 1,
+        width: 6,
+        borderRadius: 17,
+        overflow: 'hidden',
+        shadowColor: '#ADFF2F',
+        shadowOffset: { width: 0, height: 0 },
+      }, style]}
+    >
+      <LinearGradient
+        colors={['#ADFF2F', '#228B22']}
+        style={{ flex: 1 }}
+      />
+    </Animated.View>
   );
 }
 
@@ -50,13 +71,9 @@ export function InputModal({ onSend, onAudioRecorded }: InputModalProps) {
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   const [autosend, setAutosend] = useState(true);
 
-  const b0 = useSharedValue(4);
-  const b1 = useSharedValue(4);
-  const b2 = useSharedValue(4);
-  const b3 = useSharedValue(4);
-  const b4 = useSharedValue(4);
-  const b5 = useSharedValue(4);
-  const barValues = [b0, b1, b2, b3, b4, b5];
+  const bars = useRef(
+    Array.from({ length: BAR_COUNT }, () => makeMutable(4))
+  ).current;
 
   const recordingConfig = useRef<RecordingConfig>({
     interval: 100,
@@ -90,7 +107,7 @@ export function InputModal({ onSend, onAudioRecorded }: InputModalProps) {
       } catch {
         return;
       }
-      barValues.forEach((sv, i) => {
+      bars.forEach((sv, i) => {
         sv.value = withSpring(Math.max(4, amp * 56 * BAR_VARIATIONS[i]), {
           damping: 15,
           stiffness: 150,
@@ -101,7 +118,7 @@ export function InputModal({ onSend, onAudioRecorded }: InputModalProps) {
 
   const { startRecording, stopRecording, isRecording } = useAudioRecorder();
 
-  const resetBars = () => barValues.forEach((sv) => (sv.value = withSpring(4)));
+  const resetBars = () => bars.forEach((sv) => (sv.value = withSpring(4)));
 
   const handleSend = () => {
     const trimmed = text.trim();
@@ -155,8 +172,8 @@ export function InputModal({ onSend, onAudioRecorded }: InputModalProps) {
     return (
       <View className="px-4 pb-2">
         <View className="bg-bg-modal border border-border-soft rounded-2xl px-3.5 pt-4 pb-3">
-          <View style={{ flexDirection: 'row', alignItems: 'center', height: 64, gap: 6, marginBottom: 12 }}>
-            {barValues.map((sv, i) => (
+          <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', height: 64, gap: 6, marginBottom: 12 }}>
+            {bars.map((sv, i) => (
               <VoiceBar key={i} sv={sv} />
             ))}
           </View>
