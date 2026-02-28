@@ -18,10 +18,14 @@ const MAPPING = {
   'paperplane.fill': 'send',
   'chevron.left.forwardslash.chevron.right': 'code',
   'chevron.right': 'chevron-right',
+  'chevron.down': 'keyboard-arrow-down',
   'plus': 'add',
   'mic.fill': 'mic',
   'arrow.up': 'arrow-upward',
   'xmark': 'close',
+  'gearshape.fill': 'settings',
+  'lightbulb.fill': 'lightbulb',
+  'hammer.fill': 'build',
 } as IconMapping;
 
 /**
