@@ -11,9 +11,9 @@
     "hono": "^4.6.0",
     "@hono/node-server": "^1.13.0",
     "commander": "^12.1.0",
-    "@hackathon/shared": "workspace:*",
-    "@hackathon/db": "workspace:*",
-    "@hackathon/ai": "workspace:*"
+    "@thread/shared": "workspace:*",
+    "@thread/db": "workspace:*",
+    "@thread/ai": "workspace:*"
   },
   "devDependencies": {
     "tsx": "^4.19.0",

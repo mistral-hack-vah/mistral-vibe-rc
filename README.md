@@ -1,4 +1,4 @@
-# Hackathon Monorepo (SQLite + sqlite-vec)
+# "Mistral" Thread Monorepo
 
 ## Prerequisites
 
@@ -25,9 +25,9 @@ pnpm dev              # runs web + server in parallel
 
 | Package | Description |
 |---------|-------------|
-| `@hackathon/shared` | Shared types and utilities |
-| `@hackathon/db` | SQLite + sqlite-vec + Drizzle ORM |
-| `@hackathon/ai` | AWS Bedrock LLM integration |
+| `@thread/shared` | Shared types and utilities |
+| `@thread/db` | SQLite + sqlite-vec + Drizzle ORM |
+| `@thread/ai` | AWS Bedrock LLM integration |
 
 ## Database
 

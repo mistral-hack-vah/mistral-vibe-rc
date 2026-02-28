@@ -1,5 +1,5 @@
 {
-  "name": "@hackathon/db",
+  "name": "@thread/db",
   "private": true,
   "type": "module",
   "main": "src/index.ts",

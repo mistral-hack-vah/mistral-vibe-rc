@@ -1,8 +1,11 @@
 {
   "expo": {
-    "name": "hackathon-mobile",
-    "slug": "hackathon-mobile",
+    "name": "thread-mobile",
+    "slug": "thread-mobile",
     "version": "1.0.0",
-    "platforms": ["ios", "android"]
+    "platforms": [
+      "ios",
+      "android"
+    ]
   }
 }

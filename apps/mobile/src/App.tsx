@@ -1,6 +1,6 @@
 import React from 'react';
 import { Text, View, StyleSheet } from 'react-native';
-import { greet } from '@hackathon/shared';
+import { greet } from '@thread/shared';
 
 export default function App() {
   return (

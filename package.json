@@ -1,5 +1,5 @@
 {
-  "name": "hackathon",
+  "name": "thread",
   "private": true,
   "scripts": {
     "dev:web": "pnpm --filter web dev",
@@ -8,8 +8,5 @@
     "build:web": "pnpm --filter web build",
     "build:server": "pnpm --filter server-cli build",
     "dev": "pnpm run --parallel dev:web dev:server"
-  },
-  "engines": {
-    "node": ">=22"
   }
 }

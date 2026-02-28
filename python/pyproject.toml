@@ -1,5 +1,5 @@
 [project]
-name = "hackathon-py"
+name = "thread-py"
 version = "0.1.0"
 requires-python = ">=3.12"
 dependencies = [
