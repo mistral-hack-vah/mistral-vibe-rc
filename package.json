@@ -7,6 +7,6 @@
     "dev:server": "pnpm --filter server-cli dev",
     "build:web": "pnpm --filter web build",
     "build:server": "pnpm --filter server-cli build",
-    "dev": "pnpm run --parallel dev:web dev:server"
+    "dev": "pnpm run dev:web & pnpm run dev:server"
   }
 }
