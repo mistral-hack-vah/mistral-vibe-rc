@@ -1,5 +1,6 @@
 import { View, Text, TextInput, Pressable } from '@/src/tw';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { ConnectionStatus } from '@/components/connection-status';
 
 export default function HomeScreen() {
   const insets = useSafeAreaInsets();
@@ -11,10 +12,7 @@ export default function HomeScreen() {
         <View className="size-10 rounded-[10px] bg-bg-button items-center justify-center">
           <Text className="text-[13px] font-bold text-text-secondary">VH</Text>
         </View>
-        {/*<Pressable className="flex-row items-center gap-1.5 rounded-full bg-bg-button px-3.5 py-1.5">
-          <Text className="text-[12px] font-bold text-accent">Get Pro</Text>
-          <View className="w-[18px] h-[10px] rounded-[3px] bg-accent" />
-        </Pressable>*/}
+        <ConnectionStatus />
         <Pressable className="size-10 items-center justify-center">
           <Text className="text-text-secondary text-lg">&#9881;</Text>
         </Pressable>
