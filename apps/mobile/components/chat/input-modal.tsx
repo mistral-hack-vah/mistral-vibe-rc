@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect, useRef } from 'react';
 import { View, Text, TextInput, Pressable, ScrollView } from '@/src/tw';
 import { Image } from '@/src/tw/image';
 import { IconSymbol } from '@/components/ui/icon-symbol';
@@ -10,8 +10,18 @@ import {
   ExpoAudioStreamModule,
   type AudioRecording,
   type RecordingConfig,
+  type AudioStreamStatus,
 } from '@siteed/expo-audio-studio';
 import { AudioVisualizer } from '@siteed/expo-audio-ui';
+import { useAudioSocket } from '@/hooks/use-audio-socket';
+import { useControlSocket } from '@/hooks/use-control-socket';
+import Animated, {
+  useSharedValue,
+  useAnimatedStyle,
+  withRepeat,
+  withTiming,
+  cancelAnimation,
+} from 'react-native-reanimated';
 
 const pressStyle = ({ pressed }: { pressed: boolean }) => ({
   opacity: pressed ? 0.85 : 1,
@@ -56,6 +66,42 @@ export function InputModal({ onSend, onAudioRecorded }: InputModalProps) {
     durationMs,
   } = useAudioRecorder();
 
+  const { status: controlStatus } = useControlSocket();
+  const audioSocket = useAudioSocket();
+  const micDisabled = controlStatus !== 'connected';
+
+  // Auto-connect audio socket as soon as control is established
+  useEffect(() => {
+    if (controlStatus === 'connected') {
+      audioSocket.connect();
+    }
+  }, [controlStatus]);
+
+  // Mic icon color based on audio socket status (dimmed when control not connected)
+  const micColor = micDisabled
+    ? '#555'
+    : audioSocket.status === 'connected'
+      ? '#34d399'
+      : audioSocket.status === 'connecting'
+        ? '#f59e0b'
+        : '#b9b9ba';
+
+  // Spinning animation for connecting state
+  const spinValue = useSharedValue(0);
+  useEffect(() => {
+    if (audioSocket.status === 'connecting') {
+      spinValue.value = 0;
+      spinValue.value = withRepeat(withTiming(1, { duration: 1000 }), -1);
+    } else {
+      cancelAnimation(spinValue);
+      spinValue.value = 0;
+    }
+  }, [audioSocket.status, spinValue]);
+
+  const micAnimatedStyle = useAnimatedStyle(() => ({
+    transform: [{ rotate: `${spinValue.value * 360}deg` }],
+  }));
+
   const handleSend = () => {
     const trimmed = text.trim();
     if (!trimmed && attachments.length === 0) return;
@@ -65,20 +111,53 @@ export function InputModal({ onSend, onAudioRecorded }: InputModalProps) {
   };
 
   const handleMicPress = useCallback(async () => {
+    // Block until control socket is established
+    if (controlStatus !== 'connected') return;
+
+    // If audio socket isn't connected, initiate connection first
+    if (audioSocket.status !== 'connected') {
+      audioSocket.connect();
+      return;
+    }
+
     const { status } = await ExpoAudioStreamModule.requestPermissionsAsync();
     if (status !== 'granted') return;
-    await startRecording(RECORDING_CONFIG);
-  }, [startRecording]);
+
+    // Send audio_start frame
+    audioSocket.sendJSON({
+      type: 'audio_start',
+      sampleRate: RECORDING_CONFIG.sampleRate,
+      encoding: RECORDING_CONFIG.encoding,
+      channels: RECORDING_CONFIG.channels,
+    });
+
+    await startRecording({
+      ...RECORDING_CONFIG,
+      onAudioStream: (evt: AudioStreamStatus) => {
+        if (evt.data) {
+          // evt.data is base64-encoded PCM — decode to binary
+          const binaryString = atob(evt.data);
+          const bytes = new Uint8Array(binaryString.length);
+          for (let i = 0; i < binaryString.length; i++) {
+            bytes[i] = binaryString.charCodeAt(i);
+          }
+          audioSocket.sendBinary(bytes.buffer);
+        }
+      },
+    });
+  }, [startRecording, audioSocket, controlStatus]);
 
   const handleCancelRecording = useCallback(async () => {
     await stopRecording();
+    audioSocket.sendJSON({ type: 'audio_end' });
     // discard — don't fire onAudioRecorded
-  }, [stopRecording]);
+  }, [stopRecording, audioSocket]);
 
   const handleSendRecording = useCallback(async () => {
     const result = await stopRecording();
+    audioSocket.sendJSON({ type: 'audio_end' });
     onAudioRecorded?.(result);
-  }, [stopRecording, onAudioRecorded]);
+  }, [stopRecording, onAudioRecorded, audioSocket]);
 
   const pickImage = async () => {
     const result = await ImagePicker.launchImageLibraryAsync({
@@ -298,10 +377,14 @@ export function InputModal({ onSend, onAudioRecorded }: InputModalProps) {
           <View className="flex-1" />
           <Pressable
             onPress={handleMicPress}
-            style={pressStyle}
+            disabled={micDisabled}
+            android_ripple={null}
             className="size-9 items-center justify-center"
+            style={{ opacity: micDisabled ? 0.4 : 1 }}
           >
-            <IconSymbol name="mic.fill" size={20} color="#b9b9ba" />
+            <Animated.View style={micAnimatedStyle}>
+              <IconSymbol name="mic.fill" size={20} color={micColor} />
+            </Animated.View>
           </Pressable>
           <Pressable
             onPress={handleSend}
