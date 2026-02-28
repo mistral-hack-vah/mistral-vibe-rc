@@ -21,7 +21,7 @@ type InputModalProps = {
 
 export function InputModal({ onSend, onAttach, onMicPress }: InputModalProps) {
   const [text, setText] = useState('');
-  const [mode, setMode] = useState<'plan' | 'build'>('build');
+  const [mode, setMode] = useState<'plan' | 'build'>('plan');
   const [attachments, setAttachments] = useState<string[]>([]);
 
   const handleSend = () => {
