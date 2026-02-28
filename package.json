@@ -8,5 +8,10 @@
     "build:web": "pnpm --filter web build",
     "build:server": "pnpm --filter server build",
     "dev": "pnpm run dev:web & pnpm run dev:server"
+  },
+  "pnpm": {
+    "overrides": {
+      "lightningcss": "1.30.1"
+    }
   }
 }
