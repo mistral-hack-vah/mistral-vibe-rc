@@ -4,8 +4,8 @@ import os
 import signal
 import sys
 import time
-import wave
-from typing import Optional
+import uuid
+from typing import Optional, List
 
 import jwt
 import pyaudio
@@ -14,7 +14,8 @@ import websockets
 # ---------------------------------------------------------------------------
 # Config
 # ---------------------------------------------------------------------------
-SERVER_URL = os.environ.get("SERVER_URL", "ws://127.0.0.1:8000/ws/audio")
+SERVER_WS_URL = os.environ.get("SERVER_WS_URL", "ws://127.0.0.1:8000/ws")
+SERVER_HTTP_URL = os.environ.get("SERVER_HTTP_URL", "http://127.0.0.1:8000")
 JWT_SECRET = os.environ.get("JWT_SECRET", "dev-secret-change-me")
 JWT_ISSUER = os.environ.get("JWT_ISSUER", "voice-agent-api")
 USER_ID = os.environ.get("USER_ID", "local-mic-user")
@@ -43,12 +44,16 @@ def generate_token(user_id: str) -> str:
 # ---------------------------------------------------------------------------
 async def stream_microphone():
     token = generate_token(USER_ID)
-    uri = f"{SERVER_URL}?token={token}"
+    session_id = str(uuid.uuid4())
+    uri = f"{SERVER_WS_URL}?token={token}&session_id={session_id}"
 
     print(f"Connecting to {uri}...")
     try:
         async with websockets.connect(uri) as websocket:
-            print("Connected! Listening... (Ctrl+C to stop)")
+            print("Connected! Initializing...")
+            
+            # Send init message
+            await websocket.send(json.dumps({"type": "init"}))
 
             # Start the microphone stream
             p = pyaudio.PyAudio()
@@ -83,19 +88,25 @@ async def stream_microphone():
                         payload = data.get("data", {})
 
                         if event == "session":
-                            print(f"\n[Session Started] ID: {payload.get('session_id')}")
+                            print(f"\n[Session Initialized] ID: {payload.get('session_id')}")
+                            history = payload.get("history", [])
+                            if history:
+                                print(f"History: {len(history)} turns")
                         elif event == "partial_transcript":
-                            # Print partials on the same line to show "live" updates
                             sys.stdout.write(f"\rPartial: {payload.get('text')}... ")
                             sys.stdout.flush()
                         elif event == "final_transcript":
                             print(f"\n[Final Transcript] {payload.get('text')}")
-                        elif event == "command":
-                            intent = payload.get("intent")
-                            args = payload.get("args")
-                            print(f"[Command Detected] Intent: {intent}, Args: {args}")
                         elif event == "agent_delta":
-                            print(f"[Agent] {payload.get('text')}")
+                            # Stream text delta
+                            sys.stdout.write(payload.get("text", ""))
+                            sys.stdout.flush()
+                        elif event == "audio_delta":
+                            # Received audio (ElevenLabs data or similar)
+                            # For now, just log that we received it
+                            pass
+                        elif event == "agent_stop":
+                            print(f"\n[Agent Finished] Status: {payload.get('status')}")
                         elif event == "error":
                             print(f"\n[Server Error] {payload.get('message')}")
                         elif event == "state":

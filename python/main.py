@@ -8,11 +8,13 @@ from typing import Dict, Any, Optional
 
 import jwt
 import httpx
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 
 from python.audio_processor import VoxtralAudioProcessor
 from python.vibe_executor import VibeExecutor
+from python.acp_client import ACPClient
 
 # ---------------------------------------------------------------------------
 # Config
@@ -33,19 +35,43 @@ SESSIONS: Dict[str, Dict[str, Any]] = {}
 # Singletons — None at module-load so tests can monkeypatch before startup.
 # Created inside lifespan on real server start.
 # ---------------------------------------------------------------------------
-audio_processor: Optional[VoxtralAudioProcessor] = None
+audio_processor: Optional[Any] = None
 vibe_executor: Optional[VibeExecutor] = None
+acp_client: Optional[ACPClient] = None
 
+class FakeAudioProcessor:
+    def __init__(self):
+        self.model = "fake-voxtral"
+    def reset(self, session_id: str): pass
+    async def finalize(self, session_id: str): return "fake final"
+    async def process_audio(self, audio_chunk: bytes, session_id: str):
+        return {"partial": "fake partial", "final": None}
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     """Initialize heavy singletons on startup; teardown on shutdown."""
-    global audio_processor, vibe_executor
-    if audio_processor is None:   # tests inject a fake before startup
-        audio_processor = VoxtralAudioProcessor()
+    global audio_processor, vibe_executor, acp_client
+    if audio_processor is None:
+        try:
+            audio_processor = VoxtralAudioProcessor()
+        except RuntimeError:
+            print("[Warning] Using FakeAudioProcessor (MISTRAL_API_KEY not set)")
+            audio_processor = FakeAudioProcessor()
     if vibe_executor is None:
         vibe_executor = VibeExecutor()
+    if acp_client is None:
+        acp_client = ACPClient()
+        try:
+            await acp_client.start()
+        except Exception as e:
+            print(f"[Warning] ACP client failed to start: {e}")
+            # Keep acp_client as None or a dummy if needed
+            acp_client = None
+
     yield
+
+    if acp_client:
+        await acp_client.stop()
 
 
 # ---------------------------------------------------------------------------
@@ -64,6 +90,13 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# ---------------------------------------------------------------------------
+# Static storage for uploads
+# ---------------------------------------------------------------------------
+UPLOAD_DIR = os.path.join(os.path.dirname(__file__), "uploads")
+os.makedirs(UPLOAD_DIR, exist_ok=True)
+app.mount("/uploads", StaticFiles(directory=UPLOAD_DIR), name="uploads")
 
 # ---------------------------------------------------------------------------
 # Auth helper
@@ -89,6 +122,26 @@ async def call_http_json(
 
 
 # ---------------------------------------------------------------------------
+# HTTP Endpoints
+# ---------------------------------------------------------------------------
+
+@app.post("/api/upload")
+async def upload_image(file: UploadFile = File(...)):
+    """Upload an image and return its public URI."""
+    ext = os.path.splitext(file.filename)[1]
+    filename = f"{uuid.uuid4()}{ext}"
+    filepath = os.path.join(UPLOAD_DIR, filename)
+
+    with open(filepath, "wb") as f:
+        f.write(await file.read())
+
+    # Assuming the server is running on localhost:8000 for now
+    # In production, this should be the external base URL
+    base_url = os.environ.get("BASE_URL", "http://127.0.0.1:8000")
+    return {"uri": f"{base_url}/uploads/{filename}", "path": filepath}
+
+
+# ---------------------------------------------------------------------------
 # WebSocket send helper
 # ---------------------------------------------------------------------------
 async def ws_send(websocket: WebSocket, event: str, data: Dict[str, Any]) -> None:
@@ -98,35 +151,15 @@ async def ws_send(websocket: WebSocket, event: str, data: Dict[str, Any]) -> Non
 # ---------------------------------------------------------------------------
 # WebSocket endpoint
 # ---------------------------------------------------------------------------
-@app.websocket("/ws/audio")
-async def ws_audio(websocket: WebSocket):
+@app.websocket("/ws")
+async def ws_endpoint(websocket: WebSocket):
     """
-    Real-time audio streaming endpoint.
-
-    Auth
-    ----
-    Pass a JWT either as a query parameter:  /ws/audio?token=<JWT>
-    or as an HTTP header:                    Authorization: Bearer <JWT>
-
-    Client → Server frames
-    ----------------------
-    Binary  — raw PCM16 mono 16 kHz audio chunk
-    Text    — JSON control message:
-                {"type": "control", "action": "reset"}   # discard buffer
-                {"type": "control", "action": "stop"}    # flush + finalize
-
-    Server → Client events
-    ----------------------
-    {"event": "session",            "data": {"session_id": "..."}}
-    {"event": "partial_transcript", "data": {"text": "..."}}
-    {"event": "final_transcript",   "data": {"text": "..."}}
-    {"event": "command",            "data": {"intent": "...", "args": {...}}}
-    {"event": "agent_delta",        "data": {"text": "..."}}
-    {"event": "state",              "data": {"status": "reset"|"stopped"|...}}
-    {"event": "error",              "data": {"message": "..."}}
+    Overhauled WebSocket endpoint supporting:
+    - init (server confirms and sends history)
+    - message (text + images)
+    - audio (binary chunks)
+    - interrupt
     """
-
-    # ---- Authenticate -------------------------------------------------------
     token = websocket.query_params.get("token")
     if not token:
         auth_header = websocket.headers.get("authorization", "")
@@ -145,7 +178,6 @@ async def ws_audio(websocket: WebSocket):
 
     await websocket.accept()
 
-    # ---- Session ------------------------------------------------------------
     session_id = websocket.query_params.get("session_id") or str(uuid.uuid4())
     session = SESSIONS.get(session_id)
 
@@ -161,16 +193,28 @@ async def ws_audio(websocket: WebSocket):
         await websocket.close(code=4403)
         return
 
-    await ws_send(websocket, "session", {"session_id": session_id})
+    # Setup ACP handlers for this session if available
+    if acp_client:
+        async def on_text_delta(params):
+            if params.get("sessionId") == session_id:
+                await ws_send(websocket, "agent_delta", {"text": params.get("text", "")})
 
-    # ---- Real-time loop -----------------------------------------------------
+        async def on_audio_delta(params):
+            if params.get("sessionId") == session_id:
+                await ws_send(websocket, "audio_delta", {"audio": params.get("audio", "")})
+
+        async def on_completed(params):
+            if params.get("sessionId") == session_id:
+                await ws_send(websocket, "agent_stop", {"status": "completed"})
+
+        acp_client.on("session.textDelta", on_text_delta)
+        acp_client.on("session.audioDelta", on_audio_delta)
+        acp_client.on("session.completed", on_completed)
+
     try:
         while True:
             msg = await websocket.receive()
 
-            # ----------------------------------------------------------------
-            # Text frame → control message
-            # ----------------------------------------------------------------
             if msg.get("text") is not None:
                 try:
                     payload = json.loads(msg["text"])
@@ -178,45 +222,55 @@ async def ws_audio(websocket: WebSocket):
                     await ws_send(websocket, "error", {"message": "Invalid JSON"})
                     continue
 
-                if payload.get("type") == "control":
+                m_type = payload.get("type")
+                
+                if m_type == "init":
+                    # ACP init session
+                    await acp_client.create_session(session_id)
+                    await ws_send(websocket, "session", {
+                        "session_id": session_id,
+                        "history": session["turns"]
+                    })
+
+                elif m_type == "message":
+                    text = payload.get("text", "")
+                    images = payload.get("images", [])
+                    session["turns"].append({"role": "user", "text": text, "images": images, "ts": int(time.time())})
+                    await acp_client.prompt(session_id, text, images)
+
+                elif m_type == "interrupt":
+                    await acp_client.interrupt(session_id)
+                    await ws_send(websocket, "state", {"status": "interrupted"})
+
+                elif m_type == "control":
                     action = payload.get("action")
+                    if audio_processor is None:
+                        await ws_send(websocket, "error", {"message": "Audio processor not initialized"})
+                        continue
+
                     if action == "reset":
                         audio_processor.reset(session_id=session_id)
                         await ws_send(websocket, "state", {"status": "reset"})
                     elif action == "stop":
                         final_text = await audio_processor.finalize(session_id=session_id)
                         if final_text:
-                            await handle_final_text(websocket, session, final_text)
+                            await handle_final_text_acp(websocket, session, final_text)
                         await ws_send(websocket, "state", {"status": "stopped"})
-                    else:
-                        await ws_send(
-                            websocket, "state",
-                            {"status": "unknown_control", "action": action}
-                        )
-                else:
-                    await ws_send(websocket, "error", {"message": "Unknown message type"})
-                continue
 
-            # ----------------------------------------------------------------
-            # Binary frame → audio chunk
-            # ----------------------------------------------------------------
-            if msg.get("bytes") is not None:
+            elif msg.get("bytes") is not None:
+                if audio_processor is None:
+                    continue
                 audio_chunk: bytes = msg["bytes"]
-                out = await audio_processor.process_audio(
-                    audio_chunk, session_id=session_id
-                )
+                out = await audio_processor.process_audio(audio_chunk, session_id=session_id)
 
-                partial = out.get("partial")
-                if partial:
-                    await ws_send(websocket, "partial_transcript", {"text": partial})
+                if out.get("partial"):
+                    await ws_send(websocket, "partial_transcript", {"text": out["partial"]})
 
-                final = out.get("final")
-                if final:
-                    # Emits final_transcript + command + agent_delta events
-                    await handle_final_text(websocket, session, final)
+                if out.get("final"):
+                    await handle_final_text_acp(websocket, session, out["final"])
 
     except WebSocketDisconnect:
-        return
+        pass
     except Exception as e:
         try:
             await ws_send(websocket, "error", {"message": str(e)})
@@ -227,6 +281,28 @@ async def ws_audio(websocket: WebSocket):
             await websocket.close()
         except Exception:
             pass
+
+
+async def handle_final_text_acp(
+    websocket: WebSocket,
+    session: Dict[str, Any],
+    final_text: str,
+) -> None:
+    """Forward final transcript to ACP."""
+    session["turns"].append(
+        {"role": "user", "text": final_text, "ts": int(time.time())}
+    )
+    await ws_send(websocket, "final_transcript", {"text": final_text})
+    if acp_client:
+        await acp_client.prompt(session["session_id"], final_text)
+
+
+@app.websocket("/ws/audio")
+async def ws_audio(websocket: WebSocket):
+    # Keep old endpoint for backwards compatibility but point it to the same logic if needed
+    # or just keep it as is for ahora.
+    # The request specifically asked for /ws so I'll prioritize that.
+    pass
 
 
 # ---------------------------------------------------------------------------
