@@ -5,7 +5,9 @@
     "dev:web": "pnpm --filter web dev",
     "dev:mobile": "pnpm --filter mobile start",
     "dev:server": "pnpm --filter server dev",
-    "build:web": "pnpm --filter web build",
+    "build:ios": "pnpm --filter mobile ios",
+    "build:android": "pnpm --filter mobile android",
+    "build:web": "pnpm --filter mobile web",
     "build:server": "pnpm --filter server build",
     "dev": "pnpm run dev:web & pnpm run dev:server"
   },
