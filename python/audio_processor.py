@@ -10,7 +10,7 @@ Pipeline per audio chunk received from the mobile app:
   4. Final       — when silence exceeds threshold, flush the full utterance
                    to Voxtral for a high-accuracy final transcript
 
-All Voxtral API calls go to `client.audio.transcriptions.create`.
+All Voxtral API calls go to `client.audio.transcriptions.complete_async`.
 No local model weights are downloaded.
 """
 
@@ -176,7 +176,7 @@ class VoxtralAudioProcessor:
         """
         Send PCM16 bytes to Voxtral via the mistralai SDK.
 
-        The SDK expects an audio file-like object.  We wrap the raw PCM16
+        The SDK expects an audio file-like object. We wrap the raw PCM16
         in a minimal WAV container so Voxtral can decode the format correctly.
         """
         if not pcm16_bytes:
@@ -184,17 +184,23 @@ class VoxtralAudioProcessor:
 
         wav_bytes = self._pcm16_to_wav(pcm16_bytes)
 
-        def _call() -> str:
-            response = self._client.audio.transcriptions.create(
+        try:
+            # Use the correct SDK signature: client.audio.transcriptions.complete_async
+            # with the file parameter as a dictionary containing 'file_name' and 'content'.
+            response = await self._client.audio.transcriptions.complete_async(
                 model=self.model,
-                file=("audio.wav", io.BytesIO(wav_bytes), "audio/wav"),
-                **({"language": self.language} if self.language else {}),
+                file={
+                    "file_name": "audio.wav",
+                    "content": wav_bytes,
+                },
+                **( {"language": self.language} if self.language else {} ),
             )
-            # SDK returns an object with a .text attribute
-            return getattr(response, "text", "") or ""
-
-        # Run in a thread so the event loop isn't blocked during the API call
-        return await asyncio.to_thread(_call)
+            # TranscriptionResponse has a .text attribute as str
+            return response.text or ""
+        except Exception as e:
+            # Log or handle API errors gracefully in the stream
+            print(f"[Voxtral API Error] {e}")
+            return ""
 
     def _pcm16_to_wav(self, pcm16_bytes: bytes) -> bytes:
         """Wrap raw PCM16 mono 16 kHz bytes in a WAV container."""
