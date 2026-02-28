@@ -9,8 +9,9 @@ from typing import Dict, Any, Optional
 
 import jwt
 import httpx
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 from simple_acp_client.sdk.client import (
     PyACPSDKClient,
     PyACPAgentOptions,
@@ -33,6 +34,10 @@ JWT_ISSUER = os.environ.get("JWT_ISSUER", "voice-agent-api")
 # Optional HTTP endpoints — override the built-in Vibe bridge
 COMMAND_MODEL_URL = os.environ.get("COMMAND_MODEL_URL")
 AGENT_MODEL_URL = os.environ.get("AGENT_MODEL_URL")
+
+# Uploads
+UPLOAD_DIR = os.path.join(os.getcwd(), "uploads")
+os.makedirs(UPLOAD_DIR, exist_ok=True)
 
 # ---------------------------------------------------------------------------
 # Sessions  (swap to Redis for multi-instance deployments)
@@ -83,6 +88,27 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+app.mount("/uploads", StaticFiles(directory=UPLOAD_DIR), name="uploads")
+
+
+# ---------------------------------------------------------------------------
+# API endpoints
+# ---------------------------------------------------------------------------
+@app.post("/api/upload")
+async def upload_file(file: UploadFile = File(...)):
+    """Save an uploaded file and return its public URL."""
+    file_id = str(uuid.uuid4())
+    ext = os.path.splitext(file.filename)[1] if file.filename else ".bin"
+    safe_name = f"{file_id}{ext}"
+    dest_path = os.path.join(UPLOAD_DIR, safe_name)
+
+    with open(dest_path, "wb") as f:
+        f.write(await file.read())
+
+    # In production, this should use the absolute public domain.
+    # For local testing, we assume the client knows the host.
+    return {"url": f"/uploads/{safe_name}"}
 
 # ---------------------------------------------------------------------------
 # Auth helper
@@ -197,7 +223,29 @@ async def ws_audio(websocket: WebSocket):
                     await ws_send(websocket, "error", {"message": "Invalid JSON"})
                     continue
 
-                if payload.get("type") == "control":
+                if payload.get("type") == "init":
+                    # Send history if session was recovered
+                    await ws_send(websocket, "history", {"turns": session["turns"]})
+                    await ws_send(websocket, "state", {"status": "initialized"})
+
+                elif payload.get("type") == "message":
+                    # Manually sent text message (+ optional images)
+                    text = payload.get("text", "")
+                    image_uris = payload.get("image_uris", [])
+                    if text or image_uris:
+                        # Emits command + agent_delta events
+                        await handle_final_text(websocket, session, text, image_uris=image_uris)
+
+                elif payload.get("type") == "interrupt":
+                    # Request to stop agent stream
+                    if USE_ACP:
+                        client = await get_or_create_acp_client(session_id)
+                        # PyACPSDKClient might need an interrupt method if supported
+                        # For now, we'll just track it to stop the loop in run_agent_stream if possible
+                        session["interrupted"] = True
+                    await ws_send(websocket, "state", {"status": "interrupted"})
+
+                elif payload.get("type") == "control":
                     action = payload.get("action")
                     if action == "reset":
                         audio_processor.reset(session_id=session_id)
@@ -256,38 +304,66 @@ async def handle_final_text(
     websocket: WebSocket,
     session: Dict[str, Any],
     final_text: str,
+    image_uris: Optional[list[str]] = None,
 ) -> None:
     """
-    Called when Voxtral produces a final transcript for an utterance.
+    Called when Voxtral produces a final transcript OR a manual message is sent.
 
     1. Emit final_transcript event to the client
     2. Extract a structured command (NLU)
     3. Stream the Mistral Vibe CLI response back as agent_delta events
     """
+    image_uris = image_uris or []
     session["turns"].append(
-        {"role": "user", "text": final_text, "ts": int(time.time())}
+        {
+            "role": "user",
+            "text": final_text,
+            "image_uris": image_uris,
+            "ts": int(time.time())
+        }
     )
-    await ws_send(websocket, "final_transcript", {"text": final_text})
+    if final_text:
+        await ws_send(websocket, "final_transcript", {"text": final_text})
+
+    # Reset interruption flag for new utterance
+    session["interrupted"] = False
 
     # Step 1: Extract structured command
-    cmd = await extract_command(final_text, session_id=session["session_id"])
+    cmd = await extract_command(
+        final_text,
+        session_id=session["session_id"],
+        image_uris=image_uris
+    )
     await ws_send(websocket, "command", cmd)
 
     # Step 2: Stream Vibe CLI / agent response
     agent_parts: list[str] = []
     try:
-        async for delta_line in run_agent_stream(cmd, session_id=session["session_id"]):
-            agent_parts.append(delta_line)
-            await ws_send(websocket, "agent_delta", {"text": delta_line})
+        async for delta in run_agent_stream(cmd, session_id=session["session_id"]):
+            if session.get("interrupted"):
+                break
+            
+            if isinstance(delta, str):
+                agent_parts.append(delta)
+                await ws_send(websocket, "agent_delta", {"text": delta})
+            elif isinstance(delta, dict) and delta.get("type") == "audio":
+                # Forward binary audio delta from agent (e.g. NineLabs/ElevenLabs)
+                await ws_send(websocket, "audio_delta", {"data": delta.get("data")})
     except Exception as e:
         await ws_send(websocket, "error", {"message": f"Agent error: {type(e).__name__}: {e}"})
 
-    session["turns"].append(
-        {"role": "assistant", "text": "\n".join(agent_parts), "ts": int(time.time())}
-    )
+    full_agent_text = "\n".join(agent_parts)
+    if full_agent_text:
+        session["turns"].append(
+            {"role": "assistant", "text": full_agent_text, "ts": int(time.time())}
+        )
 
 
-async def extract_command(text: str, session_id: str) -> Dict[str, Any]:
+async def extract_command(
+    text: str,
+    session_id: str,
+    image_uris: Optional[list[str]] = None
+) -> Dict[str, Any]:
     """
     Convert a raw transcript into a structured command dict.
 
@@ -299,6 +375,7 @@ async def extract_command(text: str, session_id: str) -> Dict[str, Any]:
             {
                 "session_id": session_id,
                 "text": text,
+                "image_uris": image_uris or [],
                 "schema": {"intent": "string", "args": "object"},
             },
         )
@@ -323,14 +400,15 @@ async def get_or_create_acp_client(session_id: str) -> PyACPSDKClient:
             env={**os.environ, "PYTHONUTF8": "1"},
         )
         client = PyACPSDKClient(options)
-        await client.connect(["vibe-acp"])
+        # Connect to 'strand' agent via vibe-acp
+        await client.connect(["vibe-acp", "strand"])
         ACP_CLIENTS[session_id] = client
     return ACP_CLIENTS[session_id]
 
 
 async def run_agent_stream(cmd: Dict[str, Any], session_id: str):
     """
-    Yield text lines from the agent via ACP (vibe-acp).
+    Yield agent response parts (text lines or audio chunks).
 
     If AGENT_MODEL_URL is set → single HTTP call, yield one line.
     Otherwise → stream via simple-acp-client connected to vibe-acp.
@@ -354,6 +432,9 @@ async def run_agent_stream(cmd: Dict[str, Any], session_id: str):
         async for message in client.receive_messages():
             if isinstance(message, TextBlock) and message.text:
                 yield message.text
+            # Forward audio blocks if supported by the SDK
+            elif hasattr(message, "audio") and message.audio:
+                yield {"type": "audio", "data": message.audio}
     else:
         # Windows fallback: vibe -p (subprocess, no persistent session)
         executor = VibeExecutor()

@@ -83,7 +83,19 @@ async def stream_microphone():
                         payload = data.get("data", {})
 
                         if event == "session":
-                            print(f"\n[Session Started] ID: {payload.get('session_id')}")
+                            session_id = payload.get("session_id")
+                            print(f"\n[Session Started] ID: {session_id}")
+                            # Send init to get history
+                            await websocket.send(json.dumps({"type": "init"}))
+                        elif event == "history":
+                            turns = payload.get("turns", [])
+                            if turns:
+                                print("\n--- Session History ---")
+                                for turn in turns:
+                                    role = turn.get("role")
+                                    text = turn.get("text")
+                                    print(f"[{role}] {text}")
+                                print("-----------------------\n")
                         elif event == "partial_transcript":
                             # Print partials on the same line to show "live" updates
                             sys.stdout.write(f"\rPartial: {payload.get('text')}... ")
