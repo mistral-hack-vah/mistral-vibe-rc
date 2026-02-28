@@ -4,6 +4,7 @@ import json
 import time
 import uuid
 import asyncio
+import traceback
 from contextlib import asynccontextmanager
 from typing import Dict, Any, Optional
 
@@ -350,6 +351,8 @@ async def handle_final_text(
                 # Forward binary audio delta from agent (e.g. NineLabs/ElevenLabs)
                 await ws_send(websocket, "audio_delta", {"data": delta.get("data")})
     except Exception as e:
+        tb = traceback.format_exc()
+        print(f"[Agent Error]\n{tb}", flush=True)
         await ws_send(websocket, "error", {"message": f"Agent error: {type(e).__name__}: {e}"})
 
     full_agent_text = "\n".join(agent_parts)
