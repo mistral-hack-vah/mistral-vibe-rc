@@ -1,7 +1,10 @@
 import { useState } from 'react';
 import { View, Text, TextInput, Pressable, ScrollView } from '@/src/tw';
+import { Image } from '@/src/tw/image';
 import { IconSymbol } from '@/components/ui/icon-symbol';
 import { ModeSelector } from './mode-selector';
+import * as ImagePicker from 'expo-image-picker';
+import type { Attachment } from './types';
 
 const pressStyle = ({ pressed }: { pressed: boolean }) => ({
   opacity: pressed ? 0.85 : 1,
@@ -14,22 +17,44 @@ const pressStyle = ({ pressed }: { pressed: boolean }) => ({
 });
 
 type InputModalProps = {
-  onSend: (text: string) => void;
-  onAttach?: () => void;
+  onSend: (text: string, attachments: Attachment[]) => void;
   onMicPress?: () => void;
 };
 
-export function InputModal({ onSend, onAttach, onMicPress }: InputModalProps) {
+export function InputModal({ onSend, onMicPress }: InputModalProps) {
   const [text, setText] = useState('');
   const [mode, setMode] = useState<'plan' | 'build'>('plan');
-  const [attachments, setAttachments] = useState<string[]>([]);
+  const [attachments, setAttachments] = useState<Attachment[]>([]);
 
   const handleSend = () => {
     const trimmed = text.trim();
-    if (!trimmed) return;
-    onSend(trimmed);
+    if (!trimmed && attachments.length === 0) return;
+    onSend(trimmed, attachments);
     setText('');
     setAttachments([]);
+  };
+
+  const pickImage = async () => {
+    const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ['images'],
+      allowsMultipleSelection: true,
+      quality: 0.8,
+    });
+
+    if (!result.canceled && result.assets.length > 0) {
+      const newAttachments: Attachment[] = result.assets.map((asset) => ({
+        uri: asset.uri,
+        type: 'image' as const,
+        name: asset.fileName ?? 'image.jpg',
+        width: asset.width,
+        height: asset.height,
+      }));
+      setAttachments((prev) => [...prev, ...newAttachments]);
+    }
+  };
+
+  const removeAttachment = (index: number) => {
+    setAttachments((prev) => prev.filter((_, i) => i !== index));
   };
 
   return (
@@ -43,10 +68,19 @@ export function InputModal({ onSend, onAttach, onMicPress }: InputModalProps) {
             contentContainerClassName="flex-row gap-1.5"
           >
             {attachments.map((attachment, i) => (
-              <View key={i} className="relative bg-bg-button rounded-xl overflow-hidden w-[100px] h-[100px] items-center justify-center">
-                <Text className="text-[11px] text-text-secondary">{attachment}</Text>
-                <Pressable className="absolute top-1.5 right-1.5 size-5 rounded-full bg-white items-center justify-center">
-                  <IconSymbol name="xmark" size={12} color="#000" />
+              <View
+                key={i}
+                className="relative rounded-xl overflow-hidden w-[100px] h-[100px]"
+              >
+                <Image
+                  source={attachment.uri}
+                  className="w-full h-full object-cover"
+                />
+                <Pressable
+                  onPress={() => removeAttachment(i)}
+                  className="absolute top-1.5 right-1.5 size-5 rounded-full bg-black/60 items-center justify-center"
+                >
+                  <IconSymbol name="xmark" size={10} color="#fff" />
                 </Pressable>
               </View>
             ))}
@@ -61,7 +95,7 @@ export function InputModal({ onSend, onAttach, onMicPress }: InputModalProps) {
         {/* Prompt input */}
         <TextInput
           className="text-[15px] text-text-primary min-h-[28px] mb-2.5"
-          placeholder='Ask anything...'
+          placeholder="Ask anything..."
           placeholderTextColor="#b9b9ba"
           value={text}
           onChangeText={setText}
@@ -72,7 +106,7 @@ export function InputModal({ onSend, onAttach, onMicPress }: InputModalProps) {
         {/* Bottom row: add, mode ... mic, send */}
         <View className="flex-row items-center">
           <Pressable
-            onPress={onAttach}
+            onPress={pickImage}
             style={pressStyle}
             className="size-[34px] rounded-lg bg-bg-button items-center justify-center"
           >

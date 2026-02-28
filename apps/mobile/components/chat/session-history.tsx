@@ -1,4 +1,6 @@
-import { View, Text, ScrollView } from '@/src/tw';
+import { useRef } from 'react';
+import { View, Text } from '@/src/tw';
+import { ScrollView as RNScrollView } from 'react-native';
 import type { Message } from './types';
 import { TextMessage } from './messages/text-message';
 import { ToolCallMessage } from './messages/tool-call-message';
@@ -20,6 +22,8 @@ function MessageItem({ message }: { message: Message }) {
 }
 
 export function SessionHistory({ messages }: SessionHistoryProps) {
+  const scrollRef = useRef<RNScrollView>(null);
+
   if (messages.length === 0) {
     return (
       <View className="flex-1 items-center justify-center">
@@ -32,10 +36,17 @@ export function SessionHistory({ messages }: SessionHistoryProps) {
   }
 
   return (
-    <ScrollView className="flex-1" contentContainerClassName="py-2">
+    <RNScrollView
+      ref={scrollRef}
+      style={{ flex: 1 }}
+      contentContainerStyle={{ paddingVertical: 12 }}
+      onContentSizeChange={() => {
+        scrollRef.current?.scrollToEnd({ animated: true });
+      }}
+    >
       {messages.map((message, index) => (
         <MessageItem key={index} message={message} />
       ))}
-    </ScrollView>
+    </RNScrollView>
   );
 }
