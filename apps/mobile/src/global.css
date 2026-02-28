@@ -1,0 +1,56 @@
+@import "tailwindcss/theme.css" layer(theme);
+@import "tailwindcss/preflight.css" layer(base);
+@import "tailwindcss/utilities.css";
+
+/* Platform-specific font families */
+@media android {
+  :root {
+    --font-mono: monospace;
+    --font-sans: normal;
+  }
+}
+
+@media ios {
+  :root {
+    --font-mono: ui-monospace;
+    --font-sans: system-ui;
+  }
+}
+
+/* ─── Mistral / Le Chat Design System ─── */
+
+@layer theme {
+  @theme {
+    /* Brand Colors */
+    --color-brand-orange: #F5631A;
+    --color-brand-orange-deep: #E04E0A;
+    --color-brand-amber: #F5A623;
+    --color-brand-teal: #1ABCB0;
+
+    /* Background Scale */
+    --color-bg-void: #080808;
+    --color-bg-base: #111111;
+    --color-bg-surface: #1C1C1C;
+    --color-bg-raised: #252525;
+    --color-bg-overlay: #2E2E2E;
+
+    /* Text */
+    --color-text-primary: #F4F4F4;
+    --color-text-secondary: #9A9A9A;
+    --color-text-muted: #5C5C5C;
+
+    /* Borders */
+    --color-border-subtle: rgba(255, 255, 255, 0.07);
+    --color-border-soft: rgba(255, 255, 255, 0.12);
+
+    /* Border Radius */
+    --radius-badge: 6px;
+    --radius-chip: 8px;
+    --radius-input: 10px;
+    --radius-button: 12px;
+    --radius-card: 16px;
+    --radius-modal: 24px;
+    --radius-frame: 36px;
+    --radius-pill: 999px;
+  }
+}
