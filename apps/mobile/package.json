@@ -59,7 +59,26 @@
   "private": true,
   "expo": {
     "plugins": [
-      "@siteed/expo-audio-studio"
+      "@siteed/expo-audio-studio",
+      {
+        "enablePhoneStateHandling": true,
+        "enableNotifications": true,
+        "enableBackgroundAudio": true,
+        "enableDeviceDetection": true,
+        "iosBackgroundModes": {
+          "useVoIP": false,
+          "useAudio": false,
+          "useProcessing": false,
+          "useLocation": false,
+          "useExternalAccessory": false
+        },
+        "iosConfig": {
+          "allowBackgroundAudioControls": false,
+          "backgroundProcessingTitle": "Audio Recording",
+          "microphoneUsageDescription": "Custom microphone usage message",
+          "notificationUsageDescription": "Custom notification usage message"
+        }
+      }
     ]
   }
 }
