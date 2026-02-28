@@ -19,7 +19,7 @@ pnpm dev              # runs web + server in parallel
 |-----|---------|-------------|
 | web | `pnpm dev:web` | React + Vite web app |
 | mobile | `pnpm dev:mobile` | Expo React Native app |
-| server-cli | `pnpm dev:server` | Hono local API server |
+| server | `pnpm dev:server` | Hono local API server |
 
 ## Packages
 

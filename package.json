@@ -4,9 +4,9 @@
   "scripts": {
     "dev:web": "pnpm --filter web dev",
     "dev:mobile": "pnpm --filter mobile start",
-    "dev:server": "pnpm --filter server-cli dev",
+    "dev:server": "pnpm --filter server dev",
     "build:web": "pnpm --filter web build",
-    "build:server": "pnpm --filter server-cli build",
+    "build:server": "pnpm --filter server build",
     "dev": "pnpm run dev:web & pnpm run dev:server"
   }
 }
