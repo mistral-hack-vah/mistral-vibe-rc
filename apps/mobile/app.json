@@ -34,9 +34,11 @@
     "plugins": [
       "expo-router",
       [
-        "expo-audio",
+        "@siteed/expo-audio-studio",
         {
-          "microphonePermission": "Allow $(PRODUCT_NAME) to access your microphone for voice commands."
+          "iosConfig": {
+            "microphoneUsageDescription": "Allow $(PRODUCT_NAME) to access your microphone for voice commands."
+          }
         }
       ],
       [

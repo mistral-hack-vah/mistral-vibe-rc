@@ -1,4 +1,10 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useRef } from 'react';
+import Animated, {
+  useSharedValue,
+  useAnimatedStyle,
+  withSpring,
+  type SharedValue,
+} from 'react-native-reanimated';
 import { View, Text, TextInput, Pressable, ScrollView } from '@/src/tw';
 import { Image } from '@/src/tw/image';
 import { IconSymbol } from '@/components/ui/icon-symbol';
@@ -11,7 +17,17 @@ import {
   type AudioRecording,
   type RecordingConfig,
 } from '@siteed/expo-audio-studio';
-import { AudioVisualizer } from '@siteed/expo-audio-ui';
+
+const BAR_VARIATIONS = [0.5, 0.9, 1.0, 0.8, 0.6, 0.75];
+
+function VoiceBar({ sv }: { sv: SharedValue<number> }) {
+  const style = useAnimatedStyle(() => ({ height: sv.value }));
+  return (
+    <Animated.View
+      style={[{ flex: 1, borderRadius: 3, backgroundColor: '#7cd659' }, style]}
+    />
+  );
+}
 
 const pressStyle = ({ pressed }: { pressed: boolean }) => ({
   opacity: pressed ? 0.85 : 1,
@@ -28,33 +44,64 @@ type InputModalProps = {
   onAudioRecorded?: (recording: AudioRecording) => void;
 };
 
-const RECORDING_CONFIG: RecordingConfig = {
-  interval: 500,
-  enableProcessing: true,
-  sampleRate: 44100,
-  channels: 1,
-  encoding: 'pcm_16bit',
-  output: {
-    primary: { enabled: true },
-    compressed: { enabled: false, format: 'aac', bitrate: 128000 },
-  },
-  autoResumeAfterInterruption: false,
-  bufferDurationSeconds: 0.1,
-};
-
 export function InputModal({ onSend, onAudioRecorded }: InputModalProps) {
   const [text, setText] = useState('');
   const [mode, setMode] = useState<'plan' | 'build'>('plan');
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   const [autosend, setAutosend] = useState(true);
 
-  const {
-    startRecording,
-    stopRecording,
-    isRecording,
-    analysisData,
-    durationMs,
-  } = useAudioRecorder();
+  const b0 = useSharedValue(4);
+  const b1 = useSharedValue(4);
+  const b2 = useSharedValue(4);
+  const b3 = useSharedValue(4);
+  const b4 = useSharedValue(4);
+  const b5 = useSharedValue(4);
+  const barValues = [b0, b1, b2, b3, b4, b5];
+
+  const recordingConfig = useRef<RecordingConfig>({
+    interval: 100,
+    enableProcessing: false,
+    sampleRate: 44100,
+    channels: 1,
+    encoding: 'pcm_16bit',
+    output: {
+      primary: { enabled: true },
+      compressed: { enabled: false, format: 'aac', bitrate: 128000 },
+    },
+    autoResumeAfterInterruption: false,
+    bufferDurationSeconds: 0.1,
+    onAudioStream: async (event) => {
+      let amp = 0;
+      try {
+        if (typeof event.data !== 'string') {
+          const data = event.data as unknown as Int16Array;
+          let sum = 0;
+          for (let i = 0; i < data.length; i++) sum += (data[i] / 32768) ** 2;
+          amp = Math.min(1, Math.sqrt(sum / data.length) * 6);
+        } else {
+          const binary = atob(event.data);
+          const bytes = new Uint8Array(binary.length);
+          for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+          const samples = new Int16Array(bytes.buffer);
+          let sum = 0;
+          for (let i = 0; i < samples.length; i++) sum += (samples[i] / 32768) ** 2;
+          amp = Math.min(1, Math.sqrt(sum / samples.length) * 6);
+        }
+      } catch {
+        return;
+      }
+      barValues.forEach((sv, i) => {
+        sv.value = withSpring(Math.max(4, amp * 56 * BAR_VARIATIONS[i]), {
+          damping: 15,
+          stiffness: 150,
+        });
+      });
+    },
+  }).current;
+
+  const { startRecording, stopRecording, isRecording } = useAudioRecorder();
+
+  const resetBars = () => barValues.forEach((sv) => (sv.value = withSpring(4)));
 
   const handleSend = () => {
     const trimmed = text.trim();
@@ -67,16 +114,17 @@ export function InputModal({ onSend, onAudioRecorded }: InputModalProps) {
   const handleMicPress = useCallback(async () => {
     const { status } = await ExpoAudioStreamModule.requestPermissionsAsync();
     if (status !== 'granted') return;
-    await startRecording(RECORDING_CONFIG);
+    await startRecording(recordingConfig);
   }, [startRecording]);
 
   const handleCancelRecording = useCallback(async () => {
     await stopRecording();
-    // discard — don't fire onAudioRecorded
+    resetBars();
   }, [stopRecording]);
 
   const handleSendRecording = useCallback(async () => {
     const result = await stopRecording();
+    resetBars();
     onAudioRecorded?.(result);
   }, [stopRecording, onAudioRecorded]);
 
@@ -86,7 +134,6 @@ export function InputModal({ onSend, onAudioRecorded }: InputModalProps) {
       allowsMultipleSelection: true,
       quality: 0.8,
     });
-
     if (!result.canceled && result.assets.length > 0) {
       const newAttachments: Attachment[] = result.assets.map((asset) => ({
         uri: asset.uri,
@@ -103,131 +150,40 @@ export function InputModal({ onSend, onAudioRecorded }: InputModalProps) {
     setAttachments((prev) => prev.filter((_, i) => i !== index));
   };
 
-  const formatDuration = (ms: number) => {
-    const secs = Math.floor(ms / 1000);
-    const mins = Math.floor(secs / 60);
-    const remaining = secs % 60;
-    return `${mins}:${remaining.toString().padStart(2, '0')}`;
-  };
-
   // ─── Recording UI ───
   if (isRecording) {
     return (
       <View className="px-4 pb-2">
         <View className="bg-bg-modal border border-border-soft rounded-2xl px-3.5 pt-4 pb-3">
-          {/* Waveform visualizer */}
-          <View className="items-center mb-3">
-            {analysisData ? (
-              <AudioVisualizer
-                audioData={analysisData}
-                canvasHeight={64}
-                candleWidth={6}
-                candleSpace={3}
-                mode="live"
-                showDottedLine={false}
-                showRuler={false}
-                showYAxis={false}
-                showNavigation={false}
-                showSelectedCandle={false}
-                showReferenceLine={false}
-                amplitudeScaling="humanVoice"
-                theme={{
-                  container: {},
-                  navigationContainer: {},
-                  canvasContainer: {},
-                  referenceLine: {},
-                  text: {},
-                  button: {},
-                  buttonText: {},
-                  dottedLineColor: 'transparent',
-                  yAxis: { tickColor: 'transparent', labelColor: 'transparent' },
-                  timeRuler: {
-                    tickColor: 'transparent',
-                    labelColor: 'transparent',
-                  },
-                  candle: {
-                    activeAudioColor: '#7cd659',
-                    activeSpeechColor: '#4ade80',
-                    offcanvasColor: '#3a5a2e',
-                  },
-                }}
-              />
-            ) : (
-              <View className="h-[64px] justify-center items-center">
-                <View className="flex-row items-center gap-1.5">
-                  {Array.from({ length: 11 }).map((_, i) => {
-                    const center = 5;
-                    const dist = Math.abs(i - center);
-                    const size = Math.max(4, 12 - dist * 2);
-                    return (
-                      <View
-                        key={i}
-                        style={{
-                          width: size,
-                          height: size,
-                          borderRadius: size / 2,
-                          backgroundColor:
-                            dist === 0 ? '#4ade80' : '#7cd659',
-                          opacity: 1 - dist * 0.08,
-                        }}
-                      />
-                    );
-                  })}
-                </View>
-              </View>
-            )}
+          <View style={{ flexDirection: 'row', alignItems: 'center', height: 64, gap: 6, marginBottom: 12 }}>
+            {barValues.map((sv, i) => (
+              <VoiceBar key={i} sv={sv} />
+            ))}
           </View>
 
-          {/* Duration */}
-          <Text className="text-center text-text-secondary text-xs mb-3">
-            {formatDuration(durationMs)}
-          </Text>
-
-          {/* Bottom row: cancel, autosend, send */}
           <View className="flex-row items-center">
-            {/* Cancel button */}
-            <Pressable
-              onPress={handleCancelRecording}
-              style={pressStyle}
-              className="size-[44px] rounded-xl bg-bg-button items-center justify-center"
-            >
+            <Pressable onPress={handleCancelRecording} style={pressStyle} className="size-[44px] rounded-xl bg-bg-button items-center justify-center">
               <IconSymbol name="xmark" size={18} color="#b9b9ba" />
             </Pressable>
 
-            {/* Autosend toggle */}
             <View className="flex-1 flex-row items-center justify-center">
-              <Text className="text-text-primary text-[15px] font-medium mr-2">
-                Autosend
-              </Text>
+              <Text className="text-text-primary text-[15px] font-medium mr-2">Autosend</Text>
               <Pressable
                 onPress={() => setAutosend((v) => !v)}
                 style={{
-                  backgroundColor: autosend
-                    ? 'rgba(230, 93, 45, 0.25)'
-                    : 'rgba(255,255,255,0.1)',
+                  backgroundColor: autosend ? 'rgba(230, 93, 45, 0.25)' : 'rgba(255,255,255,0.1)',
                   paddingHorizontal: 8,
                   paddingVertical: 3,
                   borderRadius: 6,
                 }}
               >
-                <Text
-                  style={{
-                    color: autosend ? '#e65d2d' : '#b9b9ba',
-                    fontSize: 13,
-                    fontWeight: '700',
-                  }}
-                >
+                <Text style={{ color: autosend ? '#e65d2d' : '#b9b9ba', fontSize: 13, fontWeight: '700' }}>
                   {autosend ? 'ON' : 'OFF'}
                 </Text>
               </Pressable>
             </View>
 
-            {/* Send button */}
-            <Pressable
-              onPress={handleSendRecording}
-              style={pressStyle}
-              className="size-[44px] rounded-xl bg-accent items-center justify-center"
-            >
+            <Pressable onPress={handleSendRecording} style={pressStyle} className="size-[44px] rounded-xl bg-accent items-center justify-center">
               <IconSymbol name="arrow.up" size={20} color="#fff" />
             </Pressable>
           </View>
@@ -240,26 +196,12 @@ export function InputModal({ onSend, onAudioRecorded }: InputModalProps) {
   return (
     <View className="px-4 pb-2">
       <View className="bg-bg-modal border border-border-soft rounded-2xl px-3.5 pt-3 pb-2.5">
-        {/* Attachments */}
         {attachments.length > 0 && (
-          <ScrollView
-            horizontal
-            className="mb-2.5"
-            contentContainerClassName="flex-row gap-1.5"
-          >
+          <ScrollView horizontal className="mb-2.5" contentContainerClassName="flex-row gap-1.5">
             {attachments.map((attachment, i) => (
-              <View
-                key={i}
-                className="relative rounded-xl overflow-hidden w-[100px] h-[100px]"
-              >
-                <Image
-                  source={attachment.uri}
-                  className="w-full h-full object-cover"
-                />
-                <Pressable
-                  onPress={() => removeAttachment(i)}
-                  className="absolute top-1.5 right-1.5 size-5 rounded-full bg-black/60 items-center justify-center"
-                >
+              <View key={i} className="relative rounded-xl overflow-hidden w-[100px] h-[100px]">
+                <Image source={attachment.uri} className="w-full h-full object-cover" />
+                <Pressable onPress={() => removeAttachment(i)} className="absolute top-1.5 right-1.5 size-5 rounded-full bg-black/60 items-center justify-center">
                   <IconSymbol name="xmark" size={10} color="#fff" />
                 </Pressable>
               </View>
@@ -267,12 +209,8 @@ export function InputModal({ onSend, onAudioRecorded }: InputModalProps) {
           </ScrollView>
         )}
 
-        {/* Delimiter */}
-        {attachments.length > 0 && (
-          <View className="h-px bg-border-soft mb-2.5" />
-        )}
+        {attachments.length > 0 && <View className="h-px bg-border-soft mb-2.5" />}
 
-        {/* Prompt input */}
         <TextInput
           className="text-[15px] text-text-primary min-h-[28px] mb-2.5"
           placeholder="Ask anything..."
@@ -283,31 +221,18 @@ export function InputModal({ onSend, onAudioRecorded }: InputModalProps) {
           multiline
         />
 
-        {/* Bottom row: add, mode ... mic, send */}
         <View className="flex-row items-center">
-          <Pressable
-            onPress={pickImage}
-            style={pressStyle}
-            className="size-[34px] rounded-lg bg-bg-button items-center justify-center"
-          >
+          <Pressable onPress={pickImage} style={pressStyle} className="size-[34px] rounded-lg bg-bg-button items-center justify-center">
             <IconSymbol name="plus" size={20} color="#e5e5e5" />
           </Pressable>
           <View className="ml-2">
             <ModeSelector mode={mode} onModeChange={setMode} />
           </View>
           <View className="flex-1" />
-          <Pressable
-            onPress={handleMicPress}
-            style={pressStyle}
-            className="size-9 items-center justify-center"
-          >
+          <Pressable onPress={handleMicPress} style={pressStyle} className="size-9 items-center justify-center">
             <IconSymbol name="mic.fill" size={20} color="#b9b9ba" />
           </Pressable>
-          <Pressable
-            onPress={handleSend}
-            style={pressStyle}
-            className="size-9 rounded-[10px] bg-accent items-center justify-center ml-1.5"
-          >
+          <Pressable onPress={handleSend} style={pressStyle} className="size-9 rounded-[10px] bg-accent items-center justify-center ml-1.5">
             <IconSymbol name="arrow.up" size={20} color="#fff" />
           </Pressable>
         </View>
