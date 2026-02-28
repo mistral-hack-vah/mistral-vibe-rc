@@ -1,10 +1,11 @@
 # python/vibe_executor.py
 """
-Mistral Vibe CLI bridge.
+Mistral Vibe ACP bridge.
 
-`VibeExecutor.execute()` spawns the `vibe` CLI (or any compatible
-binary configured via VIBE_CLI_PATH) in programmatic mode (`-p`), and
-yields stdout lines back to the WebSocket handler as `agent_delta` events.
+`VibeExecutor.execute()` connects to the Vibe CLI via the Agent Client
+Protocol (ACP) using `simple_acp_client`, sends a query, and yields
+streamed response text back to the WebSocket handler as `agent_delta`
+events.
 
 Usage example:
     executor = VibeExecutor()
@@ -12,24 +13,26 @@ Usage example:
         await ws_send(ws, "agent_delta", {"text": line})
 """
 
-import asyncio
 import os
-import subprocess
 from typing import AsyncIterator
+
+from simple_acp_client.sdk.client import PyACPSDKClient, PyACPAgentOptions
 
 
 class VibeExecutor:
     """
-    Async subprocess wrapper around the Mistral Vibe CLI.
+    ACP client wrapper around the Mistral Vibe CLI.
 
     Config via env vars:
-        VIBE_CLI_PATH   — path/name of the CLI binary (default: "vibe")
-        VIBE_TIMEOUT    — max seconds to wait for a response (default: 60)
+        VIBE_CLI_PATH   — path/name of the ACP agent binary (default: "vibe")
+        VIBE_MODEL      — model identifier to pass to the agent (optional)
+        VIBE_CWD        — working directory for the agent session (optional)
     """
 
     def __init__(self) -> None:
         self.cli_path = os.environ.get("VIBE_CLI_PATH", "vibe")
-        self.timeout = float(os.environ.get("VIBE_TIMEOUT", "60"))
+        self.model = os.environ.get("VIBE_MODEL")
+        self.cwd = os.environ.get("VIBE_CWD")
 
     async def execute(
         self,
@@ -37,69 +40,23 @@ class VibeExecutor:
         session_id: str,
     ) -> AsyncIterator[str]:
         """
-        Send *command_text* to the Vibe CLI and stream output lines.
+        Send *command_text* to the Vibe ACP agent and stream response text.
 
         Yields:
-            One non-empty stripped line at a time from the CLI's stdout.
+            One non-empty text chunk at a time from the agent's response.
 
         Raises:
-            RuntimeError  — if the CLI exits with a non-zero code.
+            RuntimeError  — if the connection or query fails.
         """
-        env = os.environ.copy()
-        env["PYTHONUTF8"] = "1"
-        proc = await asyncio.create_subprocess_exec(
-            self.cli_path,
-            "-p", command_text.strip(),
-            "--output", "text",
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            env=env,
+        options = PyACPAgentOptions(
+            model=self.model,
+            cwd=self.cwd,
         )
 
-        # Stream stdout line by line with an overall timeout
-        deadline = asyncio.get_event_loop().time() + self.timeout
-        while True:
-            remaining = deadline - asyncio.get_event_loop().time()
-            if remaining <= 0:
-                proc.kill()
-                raise RuntimeError(
-                    f"[vibe] Timeout after {self.timeout}s for session={session_id}"
-                )
-            try:
-                line_bytes = await asyncio.wait_for(
-                    proc.stdout.readline(), timeout=remaining
-                )
-            except asyncio.TimeoutError:
-                proc.kill()
-                raise RuntimeError(
-                    f"[vibe] Timeout waiting for output in session={session_id}"
-                )
+        async with PyACPSDKClient(options) as client:
+            await client.connect([self.cli_path])
+            await client.query(command_text.strip())
 
-            if not line_bytes:
-                # EOF — CLI finished writing
-                break
-
-            line = line_bytes.decode(errors="replace").rstrip()
-            if line:
-                yield line
-
-        # Wait for process exit and check return code
-        try:
-            await asyncio.wait_for(proc.wait(), timeout=5.0)
-        except asyncio.TimeoutError:
-            proc.kill()
-
-        if proc.returncode not in (0, None):
-            stderr_bytes = b""
-            if proc.stderr:
-                try:
-                    stderr_bytes = await asyncio.wait_for(
-                        proc.stderr.read(), timeout=2.0
-                    )
-                except asyncio.TimeoutError:
-                    pass
-            raise RuntimeError(
-                f"[vibe] CLI exited with code {proc.returncode} "
-                f"for session={session_id}: "
-                f"{stderr_bytes.decode(errors='replace').strip()}"
-            )
+            async for message in client.receive_messages():
+                if hasattr(message, "text") and message.text:
+                    yield message.text
