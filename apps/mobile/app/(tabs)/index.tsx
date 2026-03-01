@@ -6,6 +6,11 @@ import { ChatHeader } from '@/components/chat/chat-header';
 import { SessionHistory } from '@/components/chat/session-history';
 import { InputModal } from '@/components/chat/input-modal';
 import { Sidebar } from '@/components/sidebar';
+import {
+  SettingsSidebar,
+  type SessionMode,
+  type ModelId,
+} from '@/components/settings-sidebar';
 import { useAgent } from '@/hooks/use-agent';
 import type { Attachment } from '@/components/chat/types';
 import { useAudioSocket } from '@/hooks/use-audio-socket';
@@ -13,6 +18,9 @@ import { useAudioSocket } from '@/hooks/use-audio-socket';
 export default function HomeScreen() {
   const insets = useSafeAreaInsets();
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [sessionMode, setSessionMode] = useState<SessionMode>('default');
+  const [model, setModel] = useState<ModelId>('devstral-2');
 
   const agent = useAgent();
 
@@ -56,7 +64,7 @@ export default function HomeScreen() {
       >
         <ChatHeader
           onSidebarPress={() => setSidebarOpen(true)}
-          onSettingsPress={() => {}}
+          onSettingsPress={() => setSettingsOpen(true)}
           socketStatus={agent.socketStatus}
           onReconnect={() => agent.connect()}
         />
@@ -73,6 +81,17 @@ export default function HomeScreen() {
       <Sidebar
         visible={sidebarOpen}
         onClose={() => setSidebarOpen(false)}
+      />
+
+      <SettingsSidebar
+        visible={settingsOpen}
+        onClose={() => setSettingsOpen(false)}
+        socketStatus={agent.socketStatus}
+        onConnect={() => agent.connect()}
+        sessionMode={sessionMode}
+        onSessionModeChange={setSessionMode}
+        model={model}
+        onModelChange={setModel}
       />
     </View>
   );
