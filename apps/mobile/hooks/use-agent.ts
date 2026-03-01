@@ -39,18 +39,31 @@ export function useAgent() {
         case 'recording':
           if (event.data.status === 'started') {
             setStatus('recording');
+            setMessages((prev) => [
+              ...prev.filter((m) => m.type !== 'status'),
+              { type: 'status', status: 'recording' },
+            ]);
             console.log('[useAgent] recording started');
           } else if (event.data.status === 'stopped') {
             setStatus('transcribing');
+            setMessages((prev) => [
+              ...prev.filter((m) => m.type !== 'status'),
+              { type: 'status', status: 'transcribing' },
+            ]);
             console.log('[useAgent] recording stopped, transcribing...');
           } else if (event.data.status === 'cancelled') {
             setStatus('idle');
+            setMessages((prev) => prev.filter((m) => m.type !== 'status'));
             console.log('[useAgent] recording cancelled');
           }
           break;
 
         case 'transcribing':
           setStatus('transcribing');
+          setMessages((prev) => [
+            ...prev.filter((m) => m.type !== 'status'),
+            { type: 'status', status: 'transcribing' },
+          ]);
           console.log('[useAgent] transcribing...');
           break;
 
@@ -73,9 +86,9 @@ export function useAgent() {
 
         case 'agent_start':
           setStatus('responding');
-          // Append empty streaming assistant message
+          // Remove status messages, append empty streaming assistant message
           setMessages((prev) => [
-            ...prev,
+            ...prev.filter((m) => m.type !== 'status'),
             {
               type: 'text',
               role: 'assistant',
