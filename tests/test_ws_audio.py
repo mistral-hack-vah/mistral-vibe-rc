@@ -28,10 +28,9 @@ from fastapi import WebSocketDisconnect
 # We need to mock before importing main
 with patch.dict("os.environ", {"MISTRAL_API_KEY": "test-key"}):
     with patch("python.audio_processor.Mistral"):
-        with patch("python.strands_agent.MistralModel"):
-            with patch("python.strands_agent.Agent"):
-                import python.main as main
-                from python.session_manager import session_manager
+        with patch("python.mistral_agent.Mistral"):
+            import python.main as main
+            from python.session_manager import session_manager
 
 
 # ---------------------------------------------------------------------------

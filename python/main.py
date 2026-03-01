@@ -46,7 +46,7 @@ from python.schemas import (
     SessionResponse,
     StatusResponse,
 )
-from python.strands_agent import get_strands_agent_service
+from python.mistral_agent import get_mistral_agent_service as get_strands_agent_service
 from python.session_manager import session_manager
 from python.tts_service import stream_tts
 

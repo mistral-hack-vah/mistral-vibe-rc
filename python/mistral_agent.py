@@ -105,17 +105,12 @@ class MistralAgentService:
         Yields:
             Text deltas from the agent response.
         """
+        from mistralai.extra.run.context import RunContext
+        from mistralai.extra.run.result import RunResult
+        from mistralai.models import MessageOutputEvent
+
         agent_id = await self.get_or_create_agent(session_id)
         conversation_id = session_manager.get_conversation_id(session_id)
-
-        # Build message content
-        content: list[dict] = [{"type": "text", "text": user_message}]
-
-        for uri in image_uris or []:
-            content.append({
-                "type": "image_url",
-                "image_url": {"url": uri},
-            })
 
         # Clear interrupt flag before starting
         session_manager.clear_interrupted(session_id)
@@ -128,41 +123,57 @@ class MistralAgentService:
             image_uris=image_uris or [],
         )
 
+        # Build inputs - simple string for text-only, structured for images
+        if image_uris:
+            content: list = [{"type": "text", "text": user_message}]
+            for uri in image_uris:
+                content.append({"type": "image_url", "image_url": {"url": uri}})
+            inputs = [{"role": "user", "content": content, "type": "message.input"}]
+        else:
+            inputs = user_message
+
         full_response = ""
+        run_ctx = RunContext(agent_id=agent_id, conversation_id=conversation_id)
 
         try:
-            # Stream response from agent
-            stream = await self.client.beta.conversations.run_stream_async(
-                agent_id=agent_id,
-                conversation_id=conversation_id,
-                inputs=[{"role": "user", "content": content}],
-            )
-
-            async for event in stream:
-                # Check for interrupt
+            async for event in self.client.beta.conversations.run_stream_async(
+                run_ctx=run_ctx,
+                inputs=inputs,
+            ):
                 if session_manager.is_interrupted(session_id):
                     break
 
-                # Update conversation ID if present
-                if hasattr(event, "conversation_id") and event.conversation_id:
-                    session_manager.set_conversation_id(session_id, event.conversation_id)
+                # Last event is the RunResult summary - grab conversation_id from it
+                if isinstance(event, RunResult):
+                    if event.conversation_id:
+                        session_manager.set_conversation_id(session_id, event.conversation_id)
+                    continue
 
-                # Yield text deltas
-                if hasattr(event, "delta") and event.delta:
-                    full_response += event.delta
-                    yield event.delta
+                # All other events are RunResultEvents with a .data attribute
+                data = event.data if hasattr(event, "data") else event
 
-                # Also handle content blocks if present
-                if hasattr(event, "content") and event.content:
-                    for block in event.content:
-                        if hasattr(block, "text") and block.text:
-                            full_response += block.text
-                            yield block.text
+                if isinstance(data, MessageOutputEvent):
+                    chunk = data.content
+                    if isinstance(chunk, str):
+                        text = chunk
+                    elif hasattr(chunk, "text"):
+                        text = chunk.text
+                    else:
+                        continue
+
+                    if text:
+                        full_response += text
+                        yield text
 
         except Exception as e:
             error_msg = f"Agent error: {type(e).__name__}: {e}"
             yield f"\n[Error: {error_msg}]"
             full_response += f"\n[Error: {error_msg}]"
+
+        finally:
+            # Persist conversation_id updated during the stream
+            if run_ctx.conversation_id and run_ctx.conversation_id != conversation_id:
+                session_manager.set_conversation_id(session_id, run_ctx.conversation_id)
 
         # Add assistant turn to session history
         if full_response:
