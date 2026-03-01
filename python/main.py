@@ -18,6 +18,7 @@ Audio Format: PCM16 mono 16 kHz
 import base64
 import json
 import os
+import subprocess
 import traceback
 import uuid
 from contextlib import asynccontextmanager
@@ -49,6 +50,41 @@ from python.schemas import (
 from python.vibe_agent import get_vibe_agent_service as get_strands_agent_service
 from python.session_manager import session_manager
 from python.tts_service import stream_tts
+
+
+# ---------------------------------------------------------------------------
+# Git diff helper
+# ---------------------------------------------------------------------------
+def get_git_diffs(cwd: str | None = None) -> list[dict]:
+    """Return list of {filePath, diff} for each file changed since HEAD."""
+    try:
+        result = subprocess.run(
+            ["git", "diff", "HEAD", "--unified=5"],
+            capture_output=True, text=True, cwd=cwd, timeout=10
+        )
+        raw = result.stdout
+    except Exception:
+        return []
+
+    diffs = []
+    current_file = None
+    current_lines: list[str] = []
+
+    for line in raw.splitlines(keepends=True):
+        if line.startswith("diff --git "):
+            if current_file and current_lines:
+                diffs.append({"filePath": current_file, "diff": "".join(current_lines)})
+            # Extract b/path from "diff --git a/foo b/foo"
+            parts = line.split(" b/", 1)
+            current_file = parts[1].strip() if len(parts) == 2 else None
+            current_lines = [line]
+        elif current_file is not None:
+            current_lines.append(line)
+
+    if current_file and current_lines:
+        diffs.append({"filePath": current_file, "diff": "".join(current_lines)})
+
+    return diffs
 
 
 # ---------------------------------------------------------------------------
@@ -203,6 +239,9 @@ async def send_message(
 
         yield {"event": "agent_done", "data": json.dumps({"text": full_response})}
 
+        for edit in get_git_diffs():
+            yield {"event": "edit", "data": json.dumps(edit)}
+
         # Stream TTS audio if response is non-empty
         if full_response.strip() and os.environ.get("ELEVENLABS_API_KEY"):
             try:
@@ -252,6 +291,7 @@ async def upload_file(
     return {"url": f"/uploads/{safe_name}"}
 
 
+# health check endpoint
 @app.get("/health")
 async def health():
     """Health check endpoint."""
@@ -387,6 +427,9 @@ async def ws_audio(websocket: WebSocket):
                             )
 
                         await ws_send(websocket, "agent_done", {"text": full_response})
+
+                        for edit in get_git_diffs():
+                            await ws_send(websocket, "edit", edit)
 
                         # Stream TTS audio
                         if full_response.strip() and os.environ.get("ELEVENLABS_API_KEY"):
