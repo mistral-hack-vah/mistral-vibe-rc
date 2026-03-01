@@ -11,10 +11,22 @@ import { useAudioSocket, type ServerEvent } from './use-audio-socket';
 import { useAudioPlayback } from './use-audio-playback';
 import * as api from './api-client';
 import type { Message, Attachment } from '@/components/chat/types';
+import type { PermissionType } from './use-permissions';
+
+type PermissionChecker = (
+  type: PermissionType,
+  description: string,
+  detail?: string
+) => Promise<boolean>;
 
 export type AgentStatus = 'idle' | 'recording' | 'transcribing' | 'responding' | 'speaking';
 
-export function useAgent() {
+type UseAgentOptions = {
+  requestPermission?: PermissionChecker;
+};
+
+export function useAgent(options: UseAgentOptions = {}) {
+  const { requestPermission } = options;
   const [messages, setMessages] = useState<Message[]>([]);
   const [status, setStatus] = useState<AgentStatus>('idle');
   const [mode, setMode] = useState<'plan' | 'build'>('plan');
@@ -131,10 +143,89 @@ export function useAgent() {
         case 'edit': {
           const { filePath, diff } = event.data as { filePath: string; diff: string };
           if (filePath && diff) {
-            setMessages((prev) => [
-              ...prev,
-              { type: 'edit', filePath, diff },
-            ]);
+            // Show pending edit, then request permission
+            const editMsg: Message = { type: 'edit', filePath, diff, status: 'pending' };
+            setMessages((prev) => [...prev, editMsg]);
+
+            // Request permission asynchronously
+            if (requestPermission) {
+              requestPermission('edit', 'Edit file', filePath).then((granted) => {
+                setMessages((prev) =>
+                  prev.map((m) =>
+                    m.type === 'edit' && m.filePath === filePath && m.status === 'pending'
+                      ? { ...m, status: granted ? 'approved' : 'denied' }
+                      : m
+                  )
+                );
+              });
+            } else {
+              // No permission system, auto-approve
+              setMessages((prev) =>
+                prev.map((m) =>
+                  m.type === 'edit' && m.filePath === filePath && m.status === 'pending'
+                    ? { ...m, status: 'approved' }
+                    : m
+                )
+              );
+            }
+          }
+          break;
+        }
+
+        case 'read': {
+          const { filePath } = event.data as { filePath: string };
+          if (filePath) {
+            const readMsg: Message = { type: 'read_request', filePath, status: 'pending' };
+            setMessages((prev) => [...prev, readMsg]);
+
+            if (requestPermission) {
+              requestPermission('read', 'Read file', filePath).then((granted) => {
+                setMessages((prev) =>
+                  prev.map((m) =>
+                    m.type === 'read_request' && m.filePath === filePath && m.status === 'pending'
+                      ? { ...m, status: granted ? 'approved' : 'denied' }
+                      : m
+                  )
+                );
+              });
+            } else {
+              setMessages((prev) =>
+                prev.map((m) =>
+                  m.type === 'read_request' && m.filePath === filePath && m.status === 'pending'
+                    ? { ...m, status: 'approved' }
+                    : m
+                )
+              );
+            }
+          }
+          break;
+        }
+
+        case 'execute': {
+          const { command } = event.data as { command: string };
+          if (command) {
+            const execMsg: Message = { type: 'execute_request', command, status: 'pending' };
+            setMessages((prev) => [...prev, execMsg]);
+
+            if (requestPermission) {
+              requestPermission('execute', 'Run command', command).then((granted) => {
+                setMessages((prev) =>
+                  prev.map((m) =>
+                    m.type === 'execute_request' && m.command === command && m.status === 'pending'
+                      ? { ...m, status: granted ? 'approved' : 'denied' }
+                      : m
+                  )
+                );
+              });
+            } else {
+              setMessages((prev) =>
+                prev.map((m) =>
+                  m.type === 'execute_request' && m.command === command && m.status === 'pending'
+                    ? { ...m, status: 'approved' }
+                    : m
+                )
+              );
+            }
           }
           break;
         }
@@ -181,7 +272,7 @@ export function useAgent() {
           break;
       }
     },
-    [feedAudio, stopAudio]
+    [feedAudio, stopAudio, requestPermission]
   );
 
   // Subscribe to WS events

@@ -12,8 +12,9 @@ import {
   type ModelId,
 } from '@/components/settings-sidebar';
 import { useAgent } from '@/hooks/use-agent';
+import { usePermissionContext } from '@/contexts/permission-context';
+import { PermissionModal, PermissionBadges } from '@/components/permission-modal';
 import type { Attachment } from '@/components/chat/types';
-import { useAudioSocket } from '@/hooks/use-audio-socket';
 
 export default function HomeScreen() {
   const insets = useSafeAreaInsets();
@@ -22,7 +23,8 @@ export default function HomeScreen() {
   const [sessionMode, setSessionMode] = useState<SessionMode>('default');
   const [model, setModel] = useState<ModelId>('devstral-2');
 
-  const agent = useAgent();
+  const permissions = usePermissionContext();
+  const agent = useAgent({ requestPermission: permissions.requestPermission });
 
   // Connect on mount
   useEffect(() => {
@@ -68,6 +70,10 @@ export default function HomeScreen() {
           socketStatus={agent.socketStatus}
           onReconnect={() => agent.connect()}
         />
+        <PermissionBadges
+          permissions={permissions.permissions}
+          onGrantAll={permissions.grantAll}
+        />
         <SessionHistory messages={agent.messages} />
         <View style={{ paddingBottom: Math.max(insets.bottom, 8) }}>
           <InputModal
@@ -92,6 +98,15 @@ export default function HomeScreen() {
         onSessionModeChange={setSessionMode}
         model={model}
         onModelChange={setModel}
+        permissions={permissions.permissions}
+        onGrantPermission={permissions.grantPermission}
+        onGrantAll={permissions.grantAll}
+        onRevokeAll={permissions.revokeAll}
+      />
+
+      <PermissionModal
+        request={permissions.pendingRequest}
+        onRespond={permissions.respondToRequest}
       />
     </View>
   );

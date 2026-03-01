@@ -5,6 +5,7 @@ import type { Message } from './types';
 import { TextMessage } from './messages/text-message';
 import { AgentNotification } from './messages/agent-notification';
 import { EditMessage } from './messages/edit-message';
+import { PermissionMessage } from './messages/permission-message';
 
 type SessionHistoryProps = {
   messages: Message[];
@@ -66,7 +67,14 @@ function MessageItem({ message }: { message: Message }) {
     case 'status':
       return <StatusIndicator status={message.status} />;
     case 'edit':
-      return <EditMessage message={message} />;
+      return message.status ? (
+        <PermissionMessage message={message} />
+      ) : (
+        <EditMessage message={message} />
+      );
+    case 'read_request':
+    case 'execute_request':
+      return <PermissionMessage message={message} />;
   }
 }
 

@@ -19,6 +19,19 @@ export type ToolCallMessage = {
   type: 'edit';
   filePath: string;
   diff: string;
+  status?: 'pending' | 'approved' | 'denied';
+};
+
+export type ReadRequestMessage = {
+  type: 'read_request';
+  filePath: string;
+  status?: 'pending' | 'approved' | 'denied';
+};
+
+export type ExecuteRequestMessage = {
+  type: 'execute_request';
+  command: string;
+  status?: 'pending' | 'approved' | 'denied';
 };
 
 export type AgentNotification = {
@@ -31,4 +44,10 @@ export type StatusMessage = {
   status: 'recording' | 'transcribing';
 };
 
-export type Message = TextMessage | ToolCallMessage | AgentNotification | StatusMessage;
+export type Message =
+  | TextMessage
+  | ToolCallMessage
+  | ReadRequestMessage
+  | ExecuteRequestMessage
+  | AgentNotification
+  | StatusMessage;

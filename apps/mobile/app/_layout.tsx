@@ -4,6 +4,7 @@ import { DarkTheme, ThemeProvider } from '@react-navigation/native';
 import { Stack } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import 'react-native-reanimated';
+import { PermissionProvider } from '@/contexts/permission-context';
 
 const MistralDarkTheme = {
   ...DarkTheme,
@@ -24,20 +25,22 @@ export const unstable_settings = {
 
 export default function RootLayout() {
   return (
-    <ThemeProvider value={MistralDarkTheme}>
-      <Stack>
-        <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
-        <Stack.Screen
-          name="modal"
-          options={{
-            presentation: 'modal',
-            title: 'Modal',
-            headerStyle: { backgroundColor: '#222225' },
-            headerTintColor: '#ffffff',
-          }}
-        />
-      </Stack>
-      <StatusBar style="light" />
-    </ThemeProvider>
+    <PermissionProvider>
+      <ThemeProvider value={MistralDarkTheme}>
+        <Stack>
+          <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
+          <Stack.Screen
+            name="modal"
+            options={{
+              presentation: 'modal',
+              title: 'Modal',
+              headerStyle: { backgroundColor: '#222225' },
+              headerTintColor: '#ffffff',
+            }}
+          />
+        </Stack>
+        <StatusBar style="light" />
+      </ThemeProvider>
+    </PermissionProvider>
   );
 }
