@@ -47,6 +47,15 @@ class TranscribingEvent(BaseModel):
     data: dict[str, Any] = {}
 
 
+class TranscriptDeltaEvent(BaseModel):
+    event: Literal["transcript_delta"] = "transcript_delta"
+    data: TranscriptDeltaData
+
+
+class TranscriptDeltaData(BaseModel):
+    text: str
+
+
 class TranscriptEvent(BaseModel):
     event: Literal["transcript"] = "transcript"
     data: TranscriptData
@@ -148,6 +157,7 @@ ServerEvent = (
     SessionEvent
     | RecordingEvent
     | TranscribingEvent
+    | TranscriptDeltaEvent
     | TranscriptEvent
     | AgentStartEvent
     | AgentDeltaEvent

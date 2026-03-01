@@ -1,151 +1,189 @@
 # python/audio_processor.py
 """
-Push-to-talk audio processor backed by Mistral's Voxtral API.
+Realtime streaming transcription processor using Mistral's Voxtral API.
 
-Simple buffering model:
-  1. start_recording() - Begin buffering audio
-  2. append_audio()    - Add audio chunks to buffer
-  3. stop_and_transcribe() - Stop recording, transcribe, return text
+Pipeline:
+  1. start_recording()  - Spawn background task that opens a realtime
+                          transcription stream with Mistral.
+  2. append_audio()     - Push PCM16 chunks into an asyncio.Queue that
+                          feeds the stream.
+  3. stop_and_transcribe() - Signal end-of-stream, wait for final
+                             transcript, return text.
 
-No VAD - user explicitly controls recording start/stop.
+Transcript deltas are forwarded to the caller via an async on_delta
+callback so the WebSocket handler can push them to the client in
+real time.
 """
 
-import io
+import asyncio
 import os
-import wave
-from typing import Optional
+from typing import AsyncIterator, Awaitable, Callable, Optional
 
 from mistralai import Mistral
+from mistralai.models import (
+    AudioFormat,
+    RealtimeTranscriptionError,
+    RealtimeTranscriptionSessionCreated,
+    TranscriptionStreamDone,
+    TranscriptionStreamTextDelta,
+)
 
 
-class PushToTalkProcessor:
+class _Session:
+    """Per-session state for one realtime transcription stream."""
+
+    __slots__ = ("audio_queue", "task", "full_transcript", "done", "error")
+
+    def __init__(self) -> None:
+        self.audio_queue: asyncio.Queue[bytes | None] = asyncio.Queue()
+        self.task: asyncio.Task | None = None
+        self.full_transcript: str = ""
+        self.done: asyncio.Event = asyncio.Event()
+        self.error: str | None = None
+
+
+# Type for the delta callback: (session_id, delta_text) -> awaitable
+OnDelta = Callable[[str, str], Awaitable[None]]
+
+
+class RealtimeTranscriptionProcessor:
     """
-    Simple push-to-talk audio processor.
-
-    Buffers PCM16 audio until user explicitly stops recording,
-    then transcribes the entire buffer via Voxtral.
+    Realtime push-to-talk processor backed by Mistral's streaming
+    transcription API (voxtral-mini-transcribe-realtime-2602).
 
     Config via env vars:
-        MISTRAL_API_KEY     — required
-        VOXTRAL_MODEL       — default: voxtral-mini-2602
+        MISTRAL_API_KEY              - required
+        VOXTRAL_REALTIME_MODEL       - default: voxtral-mini-transcribe-realtime-2602
     """
 
     def __init__(
         self,
         sample_rate: int = 16_000,
-        language: Optional[str] = None,
-    ):
+        on_delta: Optional[OnDelta] = None,
+    ) -> None:
         self.sample_rate = sample_rate
-        self.language = language
+        self._on_delta = on_delta
 
         api_key = os.environ.get("MISTRAL_API_KEY")
         if not api_key:
             raise RuntimeError("MISTRAL_API_KEY environment variable is not set.")
 
-        self.model = os.environ.get("VOXTRAL_MODEL", "voxtral-mini-2602")
+        self.model = os.environ.get(
+            "VOXTRAL_REALTIME_MODEL",
+            "voxtral-mini-transcribe-realtime-2602",
+        )
         self._client = Mistral(api_key=api_key)
+        self._sessions: dict[str, _Session] = {}
 
-        # session_id -> audio buffer (bytearray)
-        self._buffers: dict[str, bytearray] = {}
-        # session_id -> recording state
-        self._recording: dict[str, bool] = {}
+    # ------------------------------------------------------------------
+    # Public API (same interface as the old PushToTalkProcessor)
+    # ------------------------------------------------------------------
 
     def start_recording(self, session_id: str) -> None:
-        """Begin recording for a session. Clears any existing buffer."""
-        self._buffers[session_id] = bytearray()
-        self._recording[session_id] = True
+        """Begin a realtime transcription session."""
+        self._cleanup(session_id)
+
+        session = _Session()
+        self._sessions[session_id] = session
+        session.task = asyncio.create_task(self._run(session_id, session))
+        print(f"[RealtimeTranscription] started for {session_id}", flush=True)
 
     def is_recording(self, session_id: str) -> bool:
-        """Check if a session is currently recording."""
-        return self._recording.get(session_id, False)
+        session = self._sessions.get(session_id)
+        return session is not None and not session.done.is_set()
 
     def append_audio(self, session_id: str, chunk: bytes) -> None:
-        """
-        Append audio chunk to the session buffer.
-
-        Args:
-            session_id: The session ID
-            chunk: Raw PCM16 mono 16kHz audio bytes
-        """
-        if session_id not in self._buffers:
-            # Auto-start if not already recording
-            self._buffers[session_id] = bytearray()
-            self._recording[session_id] = True
-
-        self._buffers[session_id].extend(chunk)
+        """Push a PCM16 chunk into the session queue."""
+        session = self._sessions.get(session_id)
+        if session and not session.done.is_set():
+            session.audio_queue.put_nowait(chunk)
 
     async def stop_and_transcribe(self, session_id: str) -> str:
-        """
-        Stop recording and transcribe the buffered audio.
-
-        Args:
-            session_id: The session ID
-
-        Returns:
-            Transcribed text, or empty string if no audio buffered.
-        """
-        self._recording[session_id] = False
-
-        if session_id not in self._buffers:
+        """Signal end-of-stream and wait for the final transcript."""
+        session = self._sessions.get(session_id)
+        if not session:
             return ""
 
-        audio_bytes = bytes(self._buffers.pop(session_id))
-        if not audio_bytes:
-            return ""
+        # Signal the async generator to stop
+        await session.audio_queue.put(None)
 
-        return await self._transcribe(audio_bytes)
+        # Wait for the transcription task to complete
+        if session.task:
+            try:
+                await asyncio.wait_for(session.task, timeout=15.0)
+            except asyncio.TimeoutError:
+                print(f"[RealtimeTranscription] timeout for {session_id}", flush=True)
+                session.task.cancel()
+            except Exception as e:
+                print(f"[RealtimeTranscription] error: {e}", flush=True)
+
+        transcript = session.full_transcript.strip()
+        print(f"[RealtimeTranscription] final transcript: {transcript!r}", flush=True)
+        self._cleanup(session_id)
+        return transcript
 
     def cancel_recording(self, session_id: str) -> None:
-        """Cancel recording and discard buffered audio."""
-        self._buffers.pop(session_id, None)
-        self._recording[session_id] = False
+        """Cancel recording and discard everything."""
+        session = self._sessions.get(session_id)
+        if session:
+            session.audio_queue.put_nowait(None)
+            if session.task:
+                session.task.cancel()
+        self._cleanup(session_id)
 
-    def get_buffer_duration_ms(self, session_id: str) -> int:
-        """Get the duration of buffered audio in milliseconds."""
-        buf = self._buffers.get(session_id)
-        if not buf:
-            return 0
-        # PCM16 mono: 2 bytes per sample
-        num_samples = len(buf) // 2
-        duration_sec = num_samples / self.sample_rate
-        return int(duration_sec * 1000)
+    # ------------------------------------------------------------------
+    # Internals
+    # ------------------------------------------------------------------
 
-    async def _transcribe(self, pcm16_bytes: bytes) -> str:
-        """
-        Send PCM16 bytes to Voxtral for transcription.
+    async def _audio_stream(self, session: _Session) -> AsyncIterator[bytes]:
+        """Async generator that drains the queue and feeds transcribe_stream."""
+        while True:
+            chunk = await session.audio_queue.get()
+            if chunk is None:
+                return
+            yield chunk
 
-        Wraps raw PCM16 in a WAV container for the API.
-        """
-        if not pcm16_bytes:
-            return ""
-
-        wav_bytes = self._pcm16_to_wav(pcm16_bytes)
+    async def _run(self, session_id: str, session: _Session) -> None:
+        """Background task: open realtime transcription and process events."""
+        audio_format = AudioFormat(encoding="pcm_s16le", sample_rate=self.sample_rate)
 
         try:
-            response = await self._client.audio.transcriptions.complete_async(
+            async for event in self._client.audio.realtime.transcribe_stream(
+                audio_stream=self._audio_stream(session),
                 model=self.model,
-                file={
-                    "file_name": "audio.wav",
-                    "content": wav_bytes,
-                },
-                **({"language": self.language} if self.language else {}),
-            )
-            return (response.text or "").strip()
-        except Exception as e:
-            print(f"[Voxtral API Error] {e}")
-            return ""
+                audio_format=audio_format,
+            ):
+                if isinstance(event, RealtimeTranscriptionSessionCreated):
+                    print(f"[RealtimeTranscription] session created", flush=True)
 
-    def _pcm16_to_wav(self, pcm16_bytes: bytes) -> bytes:
-        """Wrap raw PCM16 mono 16 kHz bytes in a WAV container."""
-        buf = io.BytesIO()
-        with wave.open(buf, "wb") as wf:
-            wf.setnchannels(1)
-            wf.setsampwidth(2)
-            wf.setframerate(self.sample_rate)
-            wf.writeframes(pcm16_bytes)
-        return buf.getvalue()
+                elif isinstance(event, TranscriptionStreamTextDelta):
+                    session.full_transcript += event.text
+                    print(f"[RealtimeTranscription] delta: {event.text!r}", flush=True)
+                    if self._on_delta:
+                        try:
+                            await self._on_delta(session_id, event.text)
+                        except Exception as e:
+                            print(f"[RealtimeTranscription] on_delta error: {e}", flush=True)
+
+                elif isinstance(event, TranscriptionStreamDone):
+                    print(f"[RealtimeTranscription] done", flush=True)
+
+                elif isinstance(event, RealtimeTranscriptionError):
+                    session.error = str(event)
+                    print(f"[RealtimeTranscription] error event: {event}", flush=True)
+
+        except Exception as e:
+            session.error = str(e)
+            print(f"[RealtimeTranscription] stream error: {e}", flush=True)
+
+        finally:
+            session.done.set()
+
+    def _cleanup(self, session_id: str) -> None:
+        self._sessions.pop(session_id, None)
 
 
 # Backwards compatibility aliases
-VoxtralAudioProcessor = PushToTalkProcessor
-AudioProcessor = PushToTalkProcessor
+PushToTalkProcessor = RealtimeTranscriptionProcessor
+VoxtralAudioProcessor = RealtimeTranscriptionProcessor
+AudioProcessor = RealtimeTranscriptionProcessor
