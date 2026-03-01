@@ -10,6 +10,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { useAudioSocket, type ServerEvent } from './use-audio-socket';
 import { useAudioPlayback } from './use-audio-playback';
 import * as api from './api-client';
+import type { RepoConfig } from './api-client';
 import type { Message, Attachment } from '@/components/chat/types';
 
 export type AgentStatus = 'idle' | 'recording' | 'transcribing' | 'responding';
@@ -19,9 +20,26 @@ export function useAgent() {
   const [status, setStatus] = useState<AgentStatus>('idle');
   const [mode, setMode] = useState<'plan' | 'build'>('plan');
 
+  // Repository state
+  const [repos, setRepos] = useState<RepoConfig[]>([]);
+  const [activeRepo, setActiveRepo] = useState<RepoConfig | null>(null);
+
   const audioSocket = useAudioSocket();
   const { feedEvent: feedAudio, stop: stopAudio } = useAudioPlayback();
   const sessionIdRef = useRef<string | null>(null);
+
+  // Load repos on mount
+  useEffect(() => {
+    api.getRepos().then((loadedRepos) => {
+      setRepos(loadedRepos);
+      const defaultRepo = loadedRepos.find((r) => r.is_default) ?? loadedRepos[0];
+      if (defaultRepo) {
+        setActiveRepo(defaultRepo);
+      }
+    }).catch((e) => {
+      console.warn('[useAgent] Failed to load repos:', e);
+    });
+  }, []);
 
   // -----------------------------------------------------------------------
   // WS event handler
@@ -209,9 +227,14 @@ export function useAgent() {
         }
       }
 
-      // Stream SSE response
+      // Stream SSE response (pass active repo's path as workdir)
       try {
-        for await (const event of api.sendMessage(sessionId, text, imageUris)) {
+        for await (const event of api.sendMessage(
+          sessionId,
+          text,
+          imageUris,
+          activeRepo?.path
+        )) {
           handleEvent(event);
         }
       } catch (e) {
@@ -225,7 +248,7 @@ export function useAgent() {
         ]);
       }
     },
-    [handleEvent]
+    [handleEvent, activeRepo]
   );
 
   // -----------------------------------------------------------------------
@@ -259,6 +282,65 @@ export function useAgent() {
     [audioSocket]
   );
 
+  // -----------------------------------------------------------------------
+  // Repository Management
+  // -----------------------------------------------------------------------
+  const selectRepo = useCallback(
+    (repoId: string) => {
+      const repo = repos.find((r) => r.id === repoId);
+      if (repo) {
+        setActiveRepo(repo);
+        // Also notify the WebSocket about the repo change
+        try {
+          audioSocket.sendJSON({ type: 'set_repo', repo_id: repoId });
+        } catch {
+          // Socket may not be connected
+        }
+      }
+    },
+    [repos, audioSocket]
+  );
+
+  const addRepo = useCallback(async (path: string, name?: string) => {
+    const newRepo = await api.addRepo(path, name);
+    setRepos((prev) => [...prev, newRepo]);
+    if (newRepo.is_default) {
+      setActiveRepo(newRepo);
+    }
+    return newRepo;
+  }, []);
+
+  const removeRepo = useCallback(
+    async (repoId: string) => {
+      await api.removeRepo(repoId);
+      setRepos((prev) => prev.filter((r) => r.id !== repoId));
+      if (activeRepo?.id === repoId) {
+        // Select the first remaining repo
+        setActiveRepo((prev) => {
+          const remaining = repos.filter((r) => r.id !== repoId);
+          return remaining[0] ?? null;
+        });
+      }
+    },
+    [activeRepo, repos]
+  );
+
+  const refreshRepos = useCallback(async () => {
+    const loadedRepos = await api.getRepos();
+    setRepos(loadedRepos);
+    // Update active repo if it still exists
+    if (activeRepo) {
+      const updated = loadedRepos.find((r) => r.id === activeRepo.id);
+      if (updated) {
+        setActiveRepo(updated);
+      } else if (loadedRepos.length > 0) {
+        setActiveRepo(loadedRepos.find((r) => r.is_default) ?? loadedRepos[0]);
+      } else {
+        setActiveRepo(null);
+      }
+    }
+  }, [activeRepo]);
+
   return {
     messages,
     status,
@@ -270,5 +352,12 @@ export function useAgent() {
     interrupt: interruptAgent,
     connect,
     audioSocket,
+    // Repository management
+    repos,
+    activeRepo,
+    selectRepo,
+    addRepo,
+    removeRepo,
+    refreshRepos,
   };
 }

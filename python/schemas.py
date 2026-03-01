@@ -131,6 +131,34 @@ class MessageRequest(BaseModel):
     session_id: str
     text: str
     image_uris: list[str] = []
+    workdir: Optional[str] = None  # Target repo/directory for vibe commands
+
+
+# ---------------------------------------------------------------------------
+# Repository Management
+# ---------------------------------------------------------------------------
+class RepoConfig(BaseModel):
+    """Configuration for a connected git repository."""
+    id: str
+    name: str
+    path: str
+    is_default: bool = False
+
+
+class ReposResponse(BaseModel):
+    """List of configured repositories."""
+    repos: list[RepoConfig]
+
+
+class AddRepoRequest(BaseModel):
+    """Request to add a new repository."""
+    path: str
+    name: Optional[str] = None  # Auto-detect from path if not provided
+
+
+class SetDefaultRepoRequest(BaseModel):
+    """Request to set the default repository."""
+    repo_id: str
 
 
 class InterruptRequest(BaseModel):

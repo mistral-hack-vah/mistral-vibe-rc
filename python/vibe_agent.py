@@ -33,6 +33,7 @@ class VibeAgentService:
         session_id: str,
         user_message: str,
         image_uris: Optional[list[str]] = None,
+        workdir: Optional[str] = None,
     ) -> AsyncIterator[str]:
         session_manager.clear_interrupted(session_id)
 
@@ -40,8 +41,9 @@ class VibeAgentService:
         classified = await self._classifier.classify(user_message)
 
         # Log classification for debugging
+        workdir_info = f" [workdir={workdir}]" if workdir else ""
         print(
-            f"[Intent] {classified.intent.value} (confidence={classified.confidence:.2f}): "
+            f"[Intent] {classified.intent.value} (confidence={classified.confidence:.2f}){workdir_info}: "
             f"'{user_message[:50]}...' -> '{classified.cleaned_text[:50]}...'"
         )
 
@@ -54,7 +56,9 @@ class VibeAgentService:
             # Route to vibe CLI for commands
             try:
                 async for line in self._executor.execute(
-                    classified.cleaned_text, session_id=session_id
+                    classified.cleaned_text,
+                    session_id=session_id,
+                    workdir=workdir,
                 ):
                     if session_manager.is_interrupted(session_id):
                         break

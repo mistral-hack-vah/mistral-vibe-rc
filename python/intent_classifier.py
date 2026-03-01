@@ -42,8 +42,10 @@ FILLER_PATTERNS = [
 
 # Politeness phrases to strip from commands
 POLITENESS_PATTERNS = [
-    r"^(can you|could you|would you|please|i want you to|i need you to|i'd like you to)\s+",
-    r"^(go ahead and|just|simply)\s+",
+    r"\b(can you|could you|would you)\s+(please\s+)?",
+    r"\b(please)\s+",
+    r"\b(i want you to|i need you to|i'd like you to)\s+",
+    r"\b(go ahead and|just|simply)\s+",
     r"\s*(please|thanks|thank you)\.?$",
     r"^(hey vibe|hey|vibe)\s*[,:]?\s*",
 ]
@@ -71,10 +73,13 @@ SYMBOL_MAPPINGS = [
     # Paths
     (r"\bforward slash\b", "/"),
     (r"\bslash\b", "/"),
-    (r"\bbackslash\b", "\\"),
-    # Common symbols
+    (r"\bbackslash\b", "\\\\"),
+    # Common symbols - use spaces around for joining words
+    (r"\s+underscore\s+", "_"),
     (r"\bunderscore\b", "_"),
+    (r"\s+hyphen\s+", "-"),
     (r"\bhyphen\b", "-"),
+    (r"\s+dash\s+", "-"),
     (r"\bdash\b", "-"),
     (r"\bcolon\b", ":"),
     (r"\bsemicolon\b", ";"),
@@ -216,7 +221,7 @@ def _clean_command(text: str) -> str:
 
     # Remove spaces around path separators
     cleaned = re.sub(r"\s*/\s*", "/", cleaned)
-    cleaned = re.sub(r"\s*\\\s*", "\\", cleaned)
+    cleaned = re.sub(r"\s*\\\s*", "\\\\", cleaned)
 
     # Remove spaces before file extensions
     cleaned = re.sub(r"\s+\.", ".", cleaned)

@@ -40,9 +40,15 @@ class VibeExecutor:
         self,
         command_text: str,
         session_id: str,
+        workdir: str | None = None,
     ) -> AsyncIterator[str]:
         """
         Send *command_text* to the Vibe CLI and stream output lines.
+
+        Args:
+            command_text: The command to execute
+            session_id: Session identifier for logging
+            workdir: Optional working directory (git repo) to run vibe in
 
         Runs the subprocess in a thread so it works with any asyncio event
         loop (including uvicorn's SelectorEventLoop on Windows).
@@ -58,9 +64,14 @@ class VibeExecutor:
 
         line_queue: queue.Queue = queue.Queue()
 
+        # Build command with optional workdir
+        cmd = [self.cli_path, "-p", command_text.strip(), "--output", "text"]
+        if workdir:
+            cmd.extend(["--workdir", workdir])
+
         def _run() -> None:
             proc = subprocess.Popen(
-                [self.cli_path, "-p", command_text.strip(), "--output", "text"],
+                cmd,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 env=env,

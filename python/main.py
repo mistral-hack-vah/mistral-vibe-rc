@@ -39,11 +39,16 @@ from fastapi.staticfiles import StaticFiles
 from sse_starlette.sse import EventSourceResponse
 
 from python.audio_processor import PushToTalkProcessor
+from python.repo_manager import get_repo_manager
 from python.schemas import (
+    AddRepoRequest,
     InterruptRequest,
     MessageRequest,
+    RepoConfig,
+    ReposResponse,
     SessionRequest,
     SessionResponse,
+    SetDefaultRepoRequest,
     StatusResponse,
 )
 from python.vibe_agent import get_vibe_agent_service as get_strands_agent_service
@@ -176,6 +181,13 @@ async def send_message(
     except PermissionError as e:
         raise HTTPException(status_code=403, detail=str(e))
 
+    # Resolve workdir: use request workdir, or fall back to default repo
+    workdir = request.workdir
+    if not workdir:
+        default_repo = get_repo_manager().get_default_repo()
+        if default_repo:
+            workdir = default_repo.path
+
     async def generate_events() -> AsyncIterator[dict]:
         yield {"event": "agent_start", "data": json.dumps({})}
 
@@ -185,6 +197,7 @@ async def send_message(
                 session_id=request.session_id,
                 user_message=request.text,
                 image_uris=request.image_uris,
+                workdir=workdir,
             ):
                 # Check for interrupt
                 if session_manager.is_interrupted(request.session_id):
@@ -235,6 +248,66 @@ async def interrupt_session(
     return StatusResponse(status="interrupted")
 
 
+# ---------------------------------------------------------------------------
+# Repository Management Endpoints
+# ---------------------------------------------------------------------------
+@app.get("/api/repos", response_model=ReposResponse)
+async def list_repos(user_id: str = Depends(get_current_user)):
+    """List all configured repositories."""
+    repos = get_repo_manager().list_repos()
+    return ReposResponse(
+        repos=[
+            RepoConfig(
+                id=r.id,
+                name=r.name,
+                path=r.path,
+                is_default=r.is_default,
+            )
+            for r in repos
+        ]
+    )
+
+
+@app.post("/api/repos", response_model=RepoConfig)
+async def add_repo(
+    request: AddRepoRequest,
+    user_id: str = Depends(get_current_user),
+):
+    """Add a new repository."""
+    try:
+        repo = get_repo_manager().add_repo(request.path, request.name)
+        return RepoConfig(
+            id=repo.id,
+            name=repo.name,
+            path=repo.path,
+            is_default=repo.is_default,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.delete("/api/repos/{repo_id}", response_model=StatusResponse)
+async def remove_repo(
+    repo_id: str,
+    user_id: str = Depends(get_current_user),
+):
+    """Remove a repository."""
+    if get_repo_manager().remove_repo(repo_id):
+        return StatusResponse(status="removed")
+    raise HTTPException(status_code=404, detail="Repository not found")
+
+
+@app.post("/api/repos/default", response_model=StatusResponse)
+async def set_default_repo(
+    request: SetDefaultRepoRequest,
+    user_id: str = Depends(get_current_user),
+):
+    """Set the default repository."""
+    if get_repo_manager().set_default(request.repo_id):
+        return StatusResponse(status="default_set")
+    raise HTTPException(status_code=404, detail="Repository not found")
+
+
 @app.post("/api/upload")
 async def upload_file(
     file: UploadFile = File(...),
@@ -281,10 +354,11 @@ async def ws_audio(websocket: WebSocket):
 
     Client -> Server (Text - JSON):
         {"type": "start"}     - Begin recording
-        {"type": "stop"}      - Stop recording, trigger transcription + agent
+        {"type": "stop", "workdir": "..."}  - Stop recording, trigger transcription + agent
         {"type": "cancel"}    - Cancel recording without transcription
         {"type": "interrupt"} - Interrupt agent stream
         {"type": "init"}      - Request session history
+        {"type": "set_repo", "repo_id": "..."}  - Set active repo for this session
 
     Client -> Server (Binary):
         Raw PCM16 mono 16 kHz audio chunks
@@ -332,6 +406,12 @@ async def ws_audio(websocket: WebSocket):
 
     await ws_send(websocket, "session", {"session_id": session_id})
 
+    # Track active repo for this session (can be changed via set_repo message)
+    active_workdir: str | None = None
+    default_repo = get_repo_manager().get_default_repo()
+    if default_repo:
+        active_workdir = default_repo.path
+
     # ---- Main Loop ----
     try:
         while True:
@@ -353,8 +433,28 @@ async def ws_audio(websocket: WebSocket):
                     session_manager.clear_interrupted(session_id)
                     await ws_send(websocket, "recording", {"status": "started"})
 
+                elif msg_type == "set_repo":
+                    # Set active repo for this session
+                    repo_id = payload.get("repo_id")
+                    if repo_id:
+                        repo = get_repo_manager().get_repo(repo_id)
+                        if repo:
+                            active_workdir = repo.path
+                            await ws_send(
+                                websocket,
+                                "state",
+                                {"status": "repo_set", "repo_id": repo_id, "repo_name": repo.name},
+                            )
+                        else:
+                            await ws_send(websocket, "error", {"message": f"Repo not found: {repo_id}"})
+                    else:
+                        await ws_send(websocket, "error", {"message": "Missing repo_id"})
+
                 elif msg_type == "stop":
                     # Stop recording, transcribe, run agent
+                    # Allow overriding workdir per-request
+                    workdir = payload.get("workdir") or active_workdir
+
                     await ws_send(websocket, "recording", {"status": "stopped"})
                     await ws_send(websocket, "transcribing", {})
 
@@ -371,6 +471,7 @@ async def ws_audio(websocket: WebSocket):
                             async for delta in get_strands_agent_service().stream_response(
                                 session_id=session_id,
                                 user_message=transcript,
+                                workdir=workdir,
                             ):
                                 if session_manager.is_interrupted(session_id):
                                     break

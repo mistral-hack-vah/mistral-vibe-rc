@@ -36,6 +36,9 @@ export default function HomeScreen() {
           onSettingsPress={() => {}}
           socketStatus={agent.socketStatus}
           onReconnect={() => agent.connect()}
+          repos={agent.repos}
+          activeRepo={agent.activeRepo}
+          onSelectRepo={agent.selectRepo}
         />
         <SessionHistory messages={agent.messages} />
         <View style={{ paddingBottom: Math.max(insets.bottom, 8) }}>

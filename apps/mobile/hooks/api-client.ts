@@ -24,6 +24,17 @@ type HistoryResponse = {
   turns: Array<{ role: string; content: string }>;
 };
 
+export type RepoConfig = {
+  id: string;
+  name: string;
+  path: string;
+  is_default: boolean;
+};
+
+type ReposResponse = {
+  repos: RepoConfig[];
+};
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
@@ -77,6 +88,53 @@ export async function interrupt(sessionId: string): Promise<void> {
   if (!res.ok) throw new Error(`interrupt failed: ${res.status}`);
 }
 
+// ---------------------------------------------------------------------------
+// Repository Management
+// ---------------------------------------------------------------------------
+
+/** Get all configured repositories. */
+export async function getRepos(): Promise<RepoConfig[]> {
+  const res = await fetch(apiUrl('/api/repos'), {
+    headers: headers(),
+  });
+  if (!res.ok) throw new Error(`getRepos failed: ${res.status}`);
+  const data: ReposResponse = await res.json();
+  return data.repos;
+}
+
+/** Add a new repository. */
+export async function addRepo(path: string, name?: string): Promise<RepoConfig> {
+  const res = await fetch(apiUrl('/api/repos'), {
+    method: 'POST',
+    headers: headers(),
+    body: JSON.stringify({ path, name: name ?? null }),
+  });
+  if (!res.ok) {
+    const error = await res.json().catch(() => ({ detail: 'Unknown error' }));
+    throw new Error(error.detail || `addRepo failed: ${res.status}`);
+  }
+  return res.json();
+}
+
+/** Remove a repository. */
+export async function removeRepo(repoId: string): Promise<void> {
+  const res = await fetch(apiUrl(`/api/repos/${repoId}`), {
+    method: 'DELETE',
+    headers: headers(),
+  });
+  if (!res.ok) throw new Error(`removeRepo failed: ${res.status}`);
+}
+
+/** Set the default repository. */
+export async function setDefaultRepo(repoId: string): Promise<void> {
+  const res = await fetch(apiUrl('/api/repos/default'), {
+    method: 'POST',
+    headers: headers(),
+    body: JSON.stringify({ repo_id: repoId }),
+  });
+  if (!res.ok) throw new Error(`setDefaultRepo failed: ${res.status}`);
+}
+
 /** Upload a file and return its server URL. */
 export async function uploadFile(
   uri: string,
@@ -107,7 +165,8 @@ export async function uploadFile(
 export async function* sendMessage(
   sessionId: string,
   text: string,
-  imageUris: string[] = []
+  imageUris: string[] = [],
+  workdir?: string
 ): AsyncGenerator<ServerEvent> {
   const res = await fetch(apiUrl('/api/message'), {
     method: 'POST',
@@ -116,6 +175,7 @@ export async function* sendMessage(
       session_id: sessionId,
       text,
       image_uris: imageUris,
+      workdir: workdir ?? null,
     }),
   });
 
