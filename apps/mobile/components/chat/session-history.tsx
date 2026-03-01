@@ -11,34 +11,36 @@ type SessionHistoryProps = {
 };
 
 function MistralLogo({ size = 64 }: { size?: number }) {
-  const unit = size / 16;
-  const px = (x: number, y: number, w: number, h: number, color: string) => (
+  // SVG viewBox: 0 0 1271 900 → aspect ratio ~1.41:1
+  const aspect = 1271 / 900;
+  const width = size * aspect;
+  const height = size;
+  const sx = width / 1271;
+  const sy = height / 900;
+
+  const rect = (x: number, y: number, w: number, h: number, color: string) => (
     <View
       key={`${x}-${y}`}
       style={{
         position: 'absolute',
-        left: x * unit,
-        top: y * unit,
-        width: w * unit,
-        height: h * unit,
+        left: x * sx,
+        top: y * sy,
+        width: w * sx,
+        height: h * sy,
         backgroundColor: color,
       }}
     />
   );
 
   return (
-    <View style={{ width: size, height: size, position: 'relative' }}>
-      {/* Battlements */}
-      {px(1, 4, 2, 2, '#F5A623')}
-      {px(5, 4, 2, 2, '#F5A623')}
-      {px(9, 4, 2, 2, '#F5A623')}
-      {px(13, 4, 2, 2, '#F5A623')}
-      {/* Wall */}
-      {px(1, 6, 14, 7, '#F5631A')}
-      {/* Gate */}
-      {px(6, 9, 4, 4, '#CC3300')}
-      {/* Base */}
-      {px(3, 13, 10, 2, '#CC3300')}
+    <View style={{ width, height, position: 'relative' }}>
+      {/* Top bar */}
+      {rect(181, 0, 908, 179, '#FFD800')}
+      {rect(181, 179, 908, 180, '#FFAF00')}
+      {/* Stem */}
+      {rect(363, 359, 544, 181, '#FF8205')}
+      {rect(363, 540, 544, 179, '#FA500F')}
+      {rect(363, 719, 544, 181, '#E10500')}
     </View>
   );
 }
