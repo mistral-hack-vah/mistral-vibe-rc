@@ -226,6 +226,7 @@ async def run():
                     # Play via Windows winmm — no media player window, blocks until done
                     mci = ctypes.windll.winmm
                     mci.mciSendStringW(f'open "{tmp.name}" type mpegvideo alias tts', None, 0, None)
+                    mci.mciSendStringW('seek tts to start', None, 0, None)
                     mci.mciSendStringW('play tts wait', None, 0, None)
                     mci.mciSendStringW('close tts', None, 0, None)
                     os.unlink(tmp.name)
