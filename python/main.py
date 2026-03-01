@@ -15,6 +15,7 @@ WebSocket Endpoint:
 Audio Format: PCM16 mono 16 kHz
 """
 
+import base64
 import json
 import os
 import traceback
@@ -35,12 +36,19 @@ from fastapi import (
 )
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel
 from sse_starlette.sse import EventSourceResponse
 
 from python.audio_processor import PushToTalkProcessor
+from python.schemas import (
+    InterruptRequest,
+    MessageRequest,
+    SessionRequest,
+    SessionResponse,
+    StatusResponse,
+)
 from python.strands_agent import get_strands_agent_service
 from python.session_manager import session_manager
+from python.tts_service import stream_tts
 
 
 # ---------------------------------------------------------------------------
@@ -120,31 +128,6 @@ async def get_current_user(authorization: str = Header(None)) -> str:
     return verify_jwt(token)
 
 
-# ---------------------------------------------------------------------------
-# Request/Response Models
-# ---------------------------------------------------------------------------
-class SessionRequest(BaseModel):
-    session_id: Optional[str] = None
-
-
-class SessionResponse(BaseModel):
-    session_id: str
-    created_at: int
-
-
-class MessageRequest(BaseModel):
-    session_id: str
-    text: str
-    image_uris: list[str] = []
-
-
-class InterruptRequest(BaseModel):
-    session_id: str
-
-
-class StatusResponse(BaseModel):
-    status: str
-
 
 # ---------------------------------------------------------------------------
 # REST Endpoints
@@ -219,6 +202,20 @@ async def send_message(
             }
 
         yield {"event": "agent_done", "data": json.dumps({"text": full_response})}
+
+        # Stream TTS audio if response is non-empty
+        if full_response.strip() and os.environ.get("ELEVENLABS_API_KEY"):
+            try:
+                async for chunk in stream_tts(full_response):
+                    if session_manager.is_interrupted(request.session_id):
+                        break
+                    audio_b64 = base64.b64encode(chunk).decode("ascii")
+                    yield {
+                        "event": "audio_delta",
+                        "data": json.dumps({"audio": audio_b64}),
+                    }
+            except Exception as e:
+                print(f"[TTS Error] {e}", flush=True)
 
     return EventSourceResponse(generate_events())
 
@@ -390,6 +387,17 @@ async def ws_audio(websocket: WebSocket):
                             )
 
                         await ws_send(websocket, "agent_done", {"text": full_response})
+
+                        # Stream TTS audio
+                        if full_response.strip() and os.environ.get("ELEVENLABS_API_KEY"):
+                            try:
+                                async for chunk in stream_tts(full_response):
+                                    if session_manager.is_interrupted(session_id):
+                                        break
+                                    audio_b64 = base64.b64encode(chunk).decode("ascii")
+                                    await ws_send(websocket, "audio_delta", {"audio": audio_b64})
+                            except Exception as e:
+                                print(f"[TTS Error] {e}", flush=True)
                     else:
                         await ws_send(websocket, "transcript", {"text": ""})
 
