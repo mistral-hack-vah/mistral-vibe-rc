@@ -45,7 +45,7 @@ export function getServerConfig(): { hostname: string; port: number } {
       // fall through to defaults
     }
   }
-  return { hostname: 'localhost', port: 8000 };
+  return { hostname: 'victors-macbook-pro', port: 8000 };
 }
 
 // ---------------------------------------------------------------------------
@@ -59,7 +59,7 @@ export function getApiBaseUrl(): string {
   }
   return (
     process.env.EXPO_PUBLIC_API_URL?.replace(/\/+$/, '') ??
-    'http://localhost:8000'
+    'http://victors-macbook-pro:8000'
   );
 }
 

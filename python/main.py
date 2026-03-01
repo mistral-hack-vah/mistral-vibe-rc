@@ -40,7 +40,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from sse_starlette.sse import EventSourceResponse
 
-from python.audio_processor import PushToTalkProcessor
+from python.audio_processor import RealtimeTranscriptionProcessor
 from python.schemas import (
     InterruptRequest,
     MessageRequest,
@@ -105,7 +105,20 @@ os.makedirs(UPLOAD_DIR, exist_ok=True)
 # ---------------------------------------------------------------------------
 # Singletons
 # ---------------------------------------------------------------------------
-audio_processor: Optional[PushToTalkProcessor] = None
+audio_processor: Optional[RealtimeTranscriptionProcessor] = None
+
+# Maps session_id -> WebSocket for forwarding transcript deltas
+_ws_connections: dict[str, WebSocket] = {}
+
+
+async def _forward_transcript_delta(session_id: str, delta_text: str) -> None:
+    """Callback invoked by the transcription processor for each text delta."""
+    ws = _ws_connections.get(session_id)
+    if ws:
+        try:
+            await ws_send(ws, "transcript_delta", {"text": delta_text})
+        except Exception:
+            pass  # connection may be closed
 
 
 @asynccontextmanager
@@ -117,7 +130,9 @@ async def lifespan(_app: FastAPI):
 
     global audio_processor
     if audio_processor is None:
-        audio_processor = PushToTalkProcessor()
+        audio_processor = RealtimeTranscriptionProcessor(
+            on_delta=_forward_transcript_delta,
+        )
 
     yield
 
@@ -458,6 +473,9 @@ async def ws_audio(websocket: WebSocket):
 
     await ws_send(websocket, "session", {"session_id": session_id})
 
+    # Register websocket so transcript deltas can be forwarded
+    _ws_connections[session_id] = websocket
+
     # ---- Main Loop ----
     try:
         while True:
@@ -480,9 +498,8 @@ async def ws_audio(websocket: WebSocket):
                     await ws_send(websocket, "recording", {"status": "started"})
 
                 elif msg_type == "stop":
-                    # Stop recording, transcribe, run agent + TTS
+                    # Stop recording, finalize transcript, run agent + TTS
                     await ws_send(websocket, "recording", {"status": "stopped"})
-                    await ws_send(websocket, "transcribing", {})
 
                     transcript = await audio_processor.stop_and_transcribe(session_id)
 
@@ -532,7 +549,8 @@ async def ws_audio(websocket: WebSocket):
         except Exception:
             pass
     finally:
-        # Clean up recording state on disconnect
+        # Clean up recording state and ws reference on disconnect
+        _ws_connections.pop(session_id, None)
         audio_processor.cancel_recording(session_id)
         try:
             await websocket.close()
