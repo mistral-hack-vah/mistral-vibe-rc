@@ -385,6 +385,11 @@ async def health():
 # ---------------------------------------------------------------------------
 async def ws_send(websocket: WebSocket, event: str, data: dict[str, Any]) -> None:
     """Send a JSON event to WebSocket client."""
+    if event == "audio_delta":
+        audio_b64 = data.get("audio", "")
+        print(f"[WS] → audio_delta  b64len={len(audio_b64)}", flush=True)
+    else:
+        print(f"[WS] → {event}  data={json.dumps(data)[:200]}", flush=True)
     await websocket.send_text(json.dumps({"event": event, "data": data}))
 
 

@@ -98,6 +98,7 @@ export class ReconnectingSocket {
   private openSocket() {
     if (this.disposed) return;
     this.setStatus('connecting');
+    console.log(`[ReconnectingSocket] connecting to ${this.url.replace(/token=[^&]+/, 'token=***')}`);
 
     const ws = new WebSocket(this.url);
     ws.binaryType = 'arraybuffer';
@@ -107,19 +108,22 @@ export class ReconnectingSocket {
       if (this.disposed) { ws.close(); return; }
       this.backoff = this.initialBackoff;
       this.setStatus('connected');
+      console.log('[ReconnectingSocket] connected');
       this.onOpen?.();
     };
 
-    ws.onclose = () => {
+    ws.onclose = (ev) => {
       if (this.disposed) return;
       this.ws = null;
+      console.log(`[ReconnectingSocket] closed  code=${ev.code}  reason=${ev.reason}`);
       this.setStatus('disconnected');
       this.onClose?.();
       this.scheduleReconnect();
     };
 
-    ws.onerror = () => {
+    ws.onerror = (ev) => {
       if (this.disposed) return;
+      console.warn('[ReconnectingSocket] error:', ev);
       ws.close();
     };
 

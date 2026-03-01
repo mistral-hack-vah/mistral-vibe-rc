@@ -42,17 +42,27 @@ function buildUrl(sessionId?: string | null): string {
 }
 
 function handleMessage(raw: string | ArrayBuffer) {
-  if (typeof raw !== 'string') return;
+  if (typeof raw !== 'string') {
+    console.log(`[AudioSocket] received binary frame (${(raw as ArrayBuffer).byteLength} bytes) — ignoring`);
+    return;
+  }
   try {
     const msg = JSON.parse(raw) as ServerEvent;
+    // Debug: log every event type (truncate audio data)
+    if (msg.event === 'audio_delta') {
+      const audioB64 = msg.data?.audio as string | undefined;
+      console.log(`[AudioSocket] event=audio_delta  b64len=${audioB64?.length ?? 0}  handlers=${eventHandlers.size}`);
+    } else {
+      console.log(`[AudioSocket] event=${msg.event}  data=${JSON.stringify(msg.data).slice(0, 200)}  handlers=${eventHandlers.size}`);
+    }
     // Capture session ID from session events
     if (msg.event === 'session' && msg.data?.session_id) {
       currentSessionId = msg.data.session_id as string;
       notifyStatus();
     }
     eventHandlers.forEach((h) => h(msg));
-  } catch {
-    // ignore malformed messages
+  } catch (e) {
+    console.warn('[AudioSocket] failed to parse message:', e, raw.slice(0, 200));
   }
 }
 

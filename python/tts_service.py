@@ -35,13 +35,17 @@ async def stream_tts(text: str) -> AsyncIterator[bytes]:
     Yields raw audio bytes (mp3) as they arrive from the streaming API.
     """
     if not text.strip():
+        print("[TTS] stream_tts: skipping empty text", flush=True)
         return
 
     api_key = _get_api_key()
     voice_id = _get_voice_id()
 
     url = f"{ELEVENLABS_API_URL}/text-to-speech/{voice_id}/stream"
+    print(f"[TTS] stream_tts: text={text[:80]!r}  voice={voice_id}", flush=True)
 
+    chunk_count = 0
+    total_bytes = 0
     async with httpx.AsyncClient(timeout=30.0) as client:
         async with client.stream(
             "POST",
@@ -59,7 +63,11 @@ async def stream_tts(text: str) -> AsyncIterator[bytes]:
                 },
             },
         ) as response:
+            print(f"[TTS] ElevenLabs response status={response.status_code}", flush=True)
             response.raise_for_status()
             async for chunk in response.aiter_bytes(chunk_size=4096):
                 if chunk:
+                    chunk_count += 1
+                    total_bytes += len(chunk)
                     yield chunk
+    print(f"[TTS] stream_tts done: {chunk_count} chunks, {total_bytes} bytes total", flush=True)
