@@ -6,15 +6,14 @@ Run with:
 
 What it does:
   1. Lists all available audio input devices so you can pick the right one.
-  2. Streams audio from your mic through VoxtralAudioProcessor (same pipeline
-     the server uses) until you press Ctrl+C.
-  3. Prints partial transcripts on the same line as you speak, then prints
-     final transcripts on a new line when you pause.
+  2. Records audio from your mic using PushToTalkProcessor.
+  3. Press Enter to transcribe the current recording, Ctrl+C to stop.
 
 Requires MISTRAL_API_KEY to be set in your environment.
 """
 
 import asyncio
+import select
 import sys
 import os
 
@@ -35,7 +34,7 @@ if os.path.exists(_env_path):
 import numpy as np
 import pyaudio
 
-from python.audio_processor import VoxtralAudioProcessor
+from python.audio_processor import PushToTalkProcessor
 
 # ---------------------------------------------------------------------------
 # Config
@@ -78,8 +77,8 @@ def vu_bar(energy: float) -> str:
 # ---------------------------------------------------------------------------
 
 async def run(device_index: int):
-    processor = VoxtralAudioProcessor()
-    processor.reset(SESSION_ID)
+    processor = PushToTalkProcessor()
+    processor.start_recording(SESSION_ID)
 
     p = pyaudio.PyAudio()
     stream = p.open(
@@ -91,7 +90,8 @@ async def run(device_index: int):
         frames_per_buffer=CHUNK,
     )
 
-    print("\nListening... speak into your mic. Press Ctrl+C to stop.\n")
+    print("\nRecording... speak into your mic.")
+    print("Press Enter to transcribe, Ctrl+C to stop.\n")
 
     try:
         while True:
@@ -99,29 +99,43 @@ async def run(device_index: int):
             energy = rms(data)
             bar = vu_bar(energy)
 
-            result = await processor.process_audio(data, SESSION_ID)
+            # Append audio to buffer
+            processor.append_audio(SESSION_ID, data)
 
-            partial = result.get("partial")
-            final = result.get("final")
+            # Show VU meter and buffer duration
+            duration_ms = processor.get_buffer_duration_ms(SESSION_ID)
+            duration_sec = duration_ms / 1000
+            sys.stdout.write(f"\r{bar} Recording: {duration_sec:.1f}s")
+            sys.stdout.flush()
 
-            if final:
-                # Clear the partial line, then print the final on its own line
-                sys.stdout.write("\r" + " " * 80 + "\r")
-                print(f"[TRANSCRIPT] {final}")
-            elif partial:
-                sys.stdout.write(f"\r{bar} {partial}...")
-                sys.stdout.flush()
-            else:
-                sys.stdout.write(f"\r{bar}")
-                sys.stdout.flush()
+            # Check for Enter key (non-blocking)
+            if select.select([sys.stdin], [], [], 0)[0]:
+                sys.stdin.readline()  # consume the newline
+                sys.stdout.write("\r" + " " * 60 + "\r")
+                print("Transcribing...")
+
+                text = await processor.stop_and_transcribe(SESSION_ID)
+                if text:
+                    print(f"[TRANSCRIPT] {text}\n")
+                else:
+                    print("[TRANSCRIPT] (no speech detected)\n")
+
+                # Start recording again
+                processor.start_recording(SESSION_ID)
+                print("Recording... (press Enter to transcribe, Ctrl+C to stop)")
 
     except (KeyboardInterrupt, asyncio.CancelledError):
-        pass
+        # Transcribe any remaining audio on exit
+        sys.stdout.write("\r" + " " * 60 + "\r")
+        print("\nTranscribing final audio...")
+        text = await processor.stop_and_transcribe(SESSION_ID)
+        if text:
+            print(f"[FINAL TRANSCRIPT] {text}")
     finally:
         stream.stop_stream()
         stream.close()
         p.terminate()
-        print("\n\nStopped.")
+        print("\nStopped.")
 
 
 # ---------------------------------------------------------------------------
