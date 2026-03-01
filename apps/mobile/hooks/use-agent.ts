@@ -128,6 +128,16 @@ export function useAgent() {
         case 'tts_done':
           setStatus('idle');
           break;
+        case 'edit': {
+          const { filePath, diff } = event.data as { filePath: string; diff: string };
+          if (filePath && diff) {
+            setMessages((prev) => [
+              ...prev,
+              { type: 'edit', filePath, diff },
+            ]);
+          }
+          break;
+        }
 
         case 'history': {
           const turns = event.data.turns as Array<{

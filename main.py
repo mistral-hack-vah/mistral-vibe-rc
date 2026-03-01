@@ -1,5 +1,5 @@
 def main():
-    print("Hello from vibe-remote-control!")
+    print("hello world")
 
 
 if __name__ == "__main__":

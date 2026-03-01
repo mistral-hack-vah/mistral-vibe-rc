@@ -19,6 +19,7 @@ import asyncio
 import base64
 import json
 import os
+import subprocess
 import traceback
 import uuid
 from contextlib import asynccontextmanager
@@ -47,10 +48,48 @@ from python.schemas import (
     SessionResponse,
     StatusResponse,
 )
-from python.vibe_agent import get_vibe_agent_service as get_strands_agent_service
 from python.session_manager import session_manager
 from python.tts_service import stream_tts
 from python.tts_utils import clean_for_tts, extract_sentences
+from python.vibe_agent import get_vibe_agent_service as get_strands_agent_service
+
+
+# ---------------------------------------------------------------------------
+# Git diff helper
+# ---------------------------------------------------------------------------
+def get_git_diffs(cwd: str | None = None) -> list[dict]:
+    """Return list of {filePath, diff} for each file changed since HEAD."""
+    try:
+        result = subprocess.run(
+            ["git", "diff", "HEAD", "--unified=5"],
+            capture_output=True,
+            text=True,
+            cwd=cwd,
+            timeout=10,
+        )
+        raw = result.stdout
+    except Exception:
+        return []
+
+    diffs = []
+    current_file = None
+    current_lines: list[str] = []
+
+    for line in raw.splitlines(keepends=True):
+        if line.startswith("diff --git "):
+            if current_file and current_lines:
+                diffs.append({"filePath": current_file, "diff": "".join(current_lines)})
+            # Extract b/path from "diff --git a/foo b/foo"
+            parts = line.split(" b/", 1)
+            current_file = parts[1].strip() if len(parts) == 2 else None
+            current_lines = [line]
+        elif current_file is not None:
+            current_lines.append(line)
+
+    if current_file and current_lines:
+        diffs.append({"filePath": current_file, "diff": "".join(current_lines)})
+
+    return diffs
 
 
 # ---------------------------------------------------------------------------
@@ -109,9 +148,7 @@ app.mount("/uploads", StaticFiles(directory=UPLOAD_DIR), name="uploads")
 def verify_jwt(token: str) -> str:
     """Return user_id (sub claim) if token is valid, else raise."""
     try:
-        payload = jwt.decode(
-            token, JWT_SECRET, algorithms=["HS256"], issuer=JWT_ISSUER
-        )
+        payload = jwt.decode(token, JWT_SECRET, algorithms=["HS256"], issuer=JWT_ISSUER)
         return payload["sub"]
     except jwt.PyJWTError as e:
         raise HTTPException(status_code=401, detail=f"Invalid token: {e}")
@@ -128,7 +165,6 @@ async def get_current_user(authorization: str = Header(None)) -> str:
         token = authorization
 
     return verify_jwt(token)
-
 
 
 # ---------------------------------------------------------------------------
@@ -192,6 +228,8 @@ async def stream_agent_with_tts(
         await event_queue.put(
             {"event": "agent_done", "data": json.dumps({"text": full_response})}
         )
+        for edit in get_git_diffs():
+            await event_queue.put({"event": "edit", "data": json.dumps(edit)})
 
         # Flush remaining sentence buffer to TTS
         remaining = clean_for_tts(sentence_buffer.strip())
@@ -215,7 +253,10 @@ async def stream_agent_with_tts(
                         break
                     audio_b64 = base64.b64encode(chunk).decode("ascii")
                     await event_queue.put(
-                        {"event": "audio_delta", "data": json.dumps({"audio": audio_b64})}
+                        {
+                            "event": "audio_delta",
+                            "data": json.dumps({"audio": audio_b64}),
+                        }
                     )
             except Exception as e:
                 print(f"[TTS Error] {e}", flush=True)
@@ -330,6 +371,7 @@ async def upload_file(
     return {"url": f"/uploads/{safe_name}"}
 
 
+# health check endpoint
 @app.get("/health")
 async def health():
     """Health check endpoint."""
