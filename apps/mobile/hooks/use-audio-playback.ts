@@ -1,95 +1,102 @@
 /**
- * Audio playback hook — decodes base64 audio_delta chunks from the server
- * and plays them sequentially using expo-audio.
+ * Audio playback hook — low-latency TTS playback.
+ *
+ * Strategy:
+ *  1. Play the first audio_delta chunk immediately (low latency).
+ *  2. While that plays, buffer all incoming chunks.
+ *  3. When playback finishes, concatenate remaining buffered chunks
+ *     into one file and play — no per-chunk gaps.
+ *  4. tts_done triggers a final drain of any leftover chunks.
  */
 
-import { useCallback, useEffect, useRef } from 'react';
-import { useAudioPlayer } from 'expo-audio';
+import { useAudioPlayer, useAudioPlayerStatus } from 'expo-audio';
 import { File, Paths } from 'expo-file-system';
+import { useCallback, useEffect, useRef } from 'react';
 import type { ServerEvent } from './use-audio-socket';
 
-/**
- * Hook that subscribes to audio_delta events and plays them.
- *
- * Usage:
- * ```
- * const { feedEvent, stop } = useAudioPlayback();
- * audioSocket.onEvent(feedEvent);
- * ```
- */
+type PlayState = 'idle' | 'starting' | 'playing';
+
 export function useAudioPlayback() {
   const player = useAudioPlayer(null);
-  const queueRef = useRef<string[]>([]);
-  const playingRef = useRef(false);
+  const status = useAudioPlayerStatus(player);
+
+  const chunksRef = useRef<string[]>([]);
+  const playStateRef = useRef<PlayState>('idle');
+  const currentFileRef = useRef<File | null>(null);
   const stoppedRef = useRef(false);
 
-  const playNext = useCallback(async () => {
-    if (playingRef.current || stoppedRef.current) return;
-    const b64 = queueRef.current.shift();
-    if (!b64) return;
+  const playBuffered = useCallback(() => {
+    if (stoppedRef.current || chunksRef.current.length === 0) return;
 
-    playingRef.current = true;
+    const toPlay = chunksRef.current.splice(0); // drain entire buffer
+    const raw = atob(toPlay.join(''));
+    const bytes = new Uint8Array(raw.length);
+    for (let i = 0; i < raw.length; i++) bytes[i] = raw.charCodeAt(i);
+
     const file = new File(Paths.cache, `tts_${Date.now()}.mp3`);
     try {
-      // Decode base64 to bytes and write to temp file
-      const raw = atob(b64);
-      const bytes = new Uint8Array(raw.length);
-      for (let i = 0; i < raw.length; i++) {
-        bytes[i] = raw.charCodeAt(i);
-      }
       file.write(bytes);
-
+      // Clean up previous file
+      try { currentFileRef.current?.delete(); } catch {}
+      currentFileRef.current = file;
+      playStateRef.current = 'starting';
       player.replace({ uri: file.uri });
       player.play();
-
-      // Wait for playback to finish
-      await new Promise<void>((resolve) => {
-        const sub = player.addListener('playbackStatusUpdate', (status) => {
-          if ('didJustFinish' in status && status.didJustFinish) {
-            sub.remove();
-            resolve();
-          }
-        });
-      });
     } catch (e) {
       console.warn('[AudioPlayback] Error:', e);
-    } finally {
-      // Clean up temp file
-      try {
-        file.delete();
-      } catch {}
-      playingRef.current = false;
-      // Play next chunk in queue
-      if (queueRef.current.length > 0 && !stoppedRef.current) {
-        playNext();
-      }
+      try { file.delete(); } catch {}
+      playStateRef.current = 'idle';
     }
   }, [player]);
+
+  // Detect playback completion via status updates
+  useEffect(() => {
+    if (playStateRef.current === 'starting' && status.playing) {
+      // Player confirmed started
+      playStateRef.current = 'playing';
+    } else if (playStateRef.current === 'playing' && !status.playing) {
+      // Playback finished — play any buffered chunks that arrived while playing
+      playStateRef.current = 'idle';
+      try { currentFileRef.current?.delete(); } catch {}
+      currentFileRef.current = null;
+      if (chunksRef.current.length > 0) {
+        playBuffered();
+      }
+    }
+  }, [status.playing, playBuffered]);
 
   const feedEvent = useCallback(
     (event: ServerEvent) => {
       if (event.event === 'audio_delta' && event.data?.audio) {
         stoppedRef.current = false;
-        queueRef.current.push(event.data.audio as string);
-        if (!playingRef.current) {
-          playNext();
+        chunksRef.current.push(event.data.audio as string);
+        // Start playing immediately if idle
+        if (playStateRef.current === 'idle') {
+          playBuffered();
+        }
+      } else if (event.event === 'tts_done') {
+        // Final drain — play anything left that arrived during the last playback
+        if (playStateRef.current === 'idle' && chunksRef.current.length > 0) {
+          playBuffered();
         }
       }
     },
-    [playNext]
+    [playBuffered]
   );
 
   const stop = useCallback(() => {
     stoppedRef.current = true;
-    queueRef.current = [];
+    chunksRef.current = [];
+    playStateRef.current = 'idle';
     player.pause();
+    try { currentFileRef.current?.delete(); } catch {}
+    currentFileRef.current = null;
   }, [player]);
 
-  // Cleanup on unmount
   useEffect(() => {
     return () => {
       stoppedRef.current = true;
-      queueRef.current = [];
+      chunksRef.current = [];
     };
   }, []);
 
