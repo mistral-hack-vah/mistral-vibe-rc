@@ -54,32 +54,83 @@ export function useAgent(options: UseAgentOptions = {}) {
             console.log('[useAgent] recording started');
           } else if (event.data.status === 'stopped') {
             setStatus('transcribing');
-            console.log('[useAgent] recording stopped, transcribing...');
+            console.log('[useAgent] recording stopped');
           } else if (event.data.status === 'cancelled') {
             setStatus('idle');
+            // Remove any in-progress streaming user message
+            setMessages((prev) =>
+              prev.filter(
+                (m) => !(m.type === 'text' && m.role === 'user' && m.isStreaming)
+              )
+            );
             console.log('[useAgent] recording cancelled');
           }
           break;
 
         case 'transcribing':
           setStatus('transcribing');
-          console.log('[useAgent] transcribing...');
           break;
+
+        case 'transcript_delta': {
+          const deltaText = event.data.text as string;
+          if (!deltaText) break;
+          setMessages((prev) => {
+            // Find existing streaming user message to append to
+            for (let i = prev.length - 1; i >= 0; i--) {
+              const m = prev[i];
+              if (m.type === 'text' && m.role === 'user' && m.isStreaming) {
+                const updated = [...prev];
+                updated[i] = { ...m, content: m.content + deltaText };
+                return updated;
+              }
+            }
+            // Create a new streaming user message
+            return [
+              ...prev,
+              {
+                type: 'text' as const,
+                role: 'user' as const,
+                content: deltaText,
+                isStreaming: true,
+                timestamp: Date.now(),
+              },
+            ];
+          });
+          break;
+        }
 
         case 'transcript': {
           const text = event.data.text as string;
           console.log('[useAgent] transcript:', text);
-          if (text) {
-            setMessages((prev) => [
-              ...prev,
-              {
-                type: 'text',
-                role: 'user',
-                content: text,
-                timestamp: Date.now(),
-              },
-            ]);
-          }
+          setMessages((prev) => {
+            // Finalize the streaming user message
+            for (let i = prev.length - 1; i >= 0; i--) {
+              const m = prev[i];
+              if (m.type === 'text' && m.role === 'user' && m.isStreaming) {
+                const updated = [...prev];
+                if (text) {
+                  updated[i] = { ...m, content: text, isStreaming: false };
+                } else {
+                  // Empty transcript — remove the streaming message
+                  updated.splice(i, 1);
+                }
+                return updated;
+              }
+            }
+            // No streaming message found — add final transcript directly
+            if (text) {
+              return [
+                ...prev,
+                {
+                  type: 'text' as const,
+                  role: 'user' as const,
+                  content: text,
+                  timestamp: Date.now(),
+                },
+              ];
+            }
+            return prev;
+          });
           break;
         }
 

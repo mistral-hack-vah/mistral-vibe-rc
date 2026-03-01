@@ -150,6 +150,10 @@ async def push_to_talk_client():
                         elif event == "transcribing":
                             print("[Transcribing...]")
 
+                        elif event == "transcript_delta":
+                            text = payload.get("text", "")
+                            print(text, end="", flush=True)
+
                         elif event == "transcript":
                             text = payload.get("text", "")
                             if text:
