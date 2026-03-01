@@ -26,24 +26,38 @@ export function useAudioPlayback() {
   const stoppedRef = useRef(false);
 
   const playBuffered = useCallback(() => {
-    if (stoppedRef.current || chunksRef.current.length === 0) return;
+    if (stoppedRef.current) {
+      console.log('[AudioPlayback] playBuffered skipped — stopped');
+      return;
+    }
+    if (chunksRef.current.length === 0) {
+      console.log('[AudioPlayback] playBuffered skipped — no chunks');
+      return;
+    }
 
     const toPlay = chunksRef.current.splice(0); // drain entire buffer
+    const totalB64Len = toPlay.reduce((s, c) => s + c.length, 0);
+    console.log(`[AudioPlayback] playBuffered: ${toPlay.length} chunks, totalB64=${totalB64Len}`);
+
     const raw = atob(toPlay.join(''));
     const bytes = new Uint8Array(raw.length);
     for (let i = 0; i < raw.length; i++) bytes[i] = raw.charCodeAt(i);
 
-    const file = new File(Paths.cache, `tts_${Date.now()}.mp3`);
+    const filename = `tts_${Date.now()}.mp3`;
+    const file = new File(Paths.cache, filename);
+    console.log(`[AudioPlayback] writing ${bytes.length} bytes to ${filename}`);
     try {
       file.write(bytes);
       // Clean up previous file
       try { currentFileRef.current?.delete(); } catch {}
       currentFileRef.current = file;
       playStateRef.current = 'starting';
+      console.log(`[AudioPlayback] player.replace({ uri: ${file.uri} })`);
       player.replace({ uri: file.uri });
+      console.log('[AudioPlayback] player.play()');
       player.play();
     } catch (e) {
-      console.warn('[AudioPlayback] Error:', e);
+      console.warn('[AudioPlayback] Error writing/playing:', e);
       try { file.delete(); } catch {}
       playStateRef.current = 'idle';
     }
@@ -51,11 +65,14 @@ export function useAudioPlayback() {
 
   // Detect playback completion via status updates
   useEffect(() => {
+    console.log(`[AudioPlayback] status.playing=${status.playing}  playState=${playStateRef.current}  buffered=${chunksRef.current.length}`);
     if (playStateRef.current === 'starting' && status.playing) {
       // Player confirmed started
+      console.log('[AudioPlayback] → transition: starting → playing');
       playStateRef.current = 'playing';
     } else if (playStateRef.current === 'playing' && !status.playing) {
       // Playback finished — play any buffered chunks that arrived while playing
+      console.log(`[AudioPlayback] → transition: playing → idle  (buffered=${chunksRef.current.length})`);
       playStateRef.current = 'idle';
       try { currentFileRef.current?.delete(); } catch {}
       currentFileRef.current = null;
@@ -69,12 +86,16 @@ export function useAudioPlayback() {
     (event: ServerEvent) => {
       if (event.event === 'audio_delta' && event.data?.audio) {
         stoppedRef.current = false;
-        chunksRef.current.push(event.data.audio as string);
+        const b64 = event.data.audio as string;
+        chunksRef.current.push(b64);
+        console.log(`[AudioPlayback] feedEvent audio_delta: b64len=${b64.length}  totalChunks=${chunksRef.current.length}  playState=${playStateRef.current}`);
         // Start playing immediately if idle
         if (playStateRef.current === 'idle') {
+          console.log('[AudioPlayback] feedEvent → triggering playBuffered (was idle)');
           playBuffered();
         }
       } else if (event.event === 'tts_done') {
+        console.log(`[AudioPlayback] feedEvent tts_done: playState=${playStateRef.current}  buffered=${chunksRef.current.length}`);
         // Final drain — play anything left that arrived during the last playback
         if (playStateRef.current === 'idle' && chunksRef.current.length > 0) {
           playBuffered();
@@ -85,6 +106,7 @@ export function useAudioPlayback() {
   );
 
   const stop = useCallback(() => {
+    console.log('[AudioPlayback] stop() called — clearing all state');
     stoppedRef.current = true;
     chunksRef.current = [];
     playStateRef.current = 'idle';
