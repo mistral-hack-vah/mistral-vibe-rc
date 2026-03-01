@@ -136,10 +136,11 @@ class MistralAgentService:
         run_ctx = RunContext(agent_id=agent_id, conversation_id=conversation_id)
 
         try:
-            async for event in self.client.beta.conversations.run_stream_async(
+            stream = await self.client.beta.conversations.run_stream_async(
                 run_ctx=run_ctx,
                 inputs=inputs,
-            ):
+            )
+            async for event in stream:
                 if session_manager.is_interrupted(session_id):
                     break
 
