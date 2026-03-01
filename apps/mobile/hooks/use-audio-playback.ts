@@ -39,9 +39,20 @@ export function useAudioPlayback() {
     const totalB64Len = toPlay.reduce((s, c) => s + c.length, 0);
     console.log(`[AudioPlayback] playBuffered: ${toPlay.length} chunks, totalB64=${totalB64Len}`);
 
-    const raw = atob(toPlay.join(''));
-    const bytes = new Uint8Array(raw.length);
-    for (let i = 0; i < raw.length; i++) bytes[i] = raw.charCodeAt(i);
+    // Decode each base64 chunk separately (they have independent padding)
+    const decoded = toPlay.map((chunk) => {
+      const raw = atob(chunk);
+      const arr = new Uint8Array(raw.length);
+      for (let i = 0; i < raw.length; i++) arr[i] = raw.charCodeAt(i);
+      return arr;
+    });
+    const totalLen = decoded.reduce((sum, b) => sum + b.length, 0);
+    const bytes = new Uint8Array(totalLen);
+    let off = 0;
+    for (const b of decoded) {
+      bytes.set(b, off);
+      off += b.length;
+    }
 
     const filename = `tts_${Date.now()}.mp3`;
     const file = new File(Paths.cache, filename);
