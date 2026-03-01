@@ -28,9 +28,8 @@ from fastapi import WebSocketDisconnect
 # We need to mock before importing main
 with patch.dict("os.environ", {"MISTRAL_API_KEY": "test-key"}):
     with patch("python.audio_processor.Mistral"):
-        with patch("python.mistral_agent.Mistral"):
-            import python.main as main
-            from python.session_manager import session_manager
+        import python.main as main
+        from python.session_manager import session_manager
 
 
 # ---------------------------------------------------------------------------
@@ -116,10 +115,7 @@ def patch_singletons(monkeypatch):
     monkeypatch.setattr(main, "audio_processor", fake_processor)
 
     # Mock get_strands_agent_service to return our fake
-    monkeypatch.setattr(
-        "python.main.get_strands_agent_service",
-        lambda: fake_agent
-    )
+    monkeypatch.setattr("python.main.get_strands_agent_service", lambda: fake_agent)
 
     # Clear session manager between tests
     session_manager._sessions.clear()
