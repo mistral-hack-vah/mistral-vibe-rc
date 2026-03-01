@@ -34,7 +34,7 @@ export function TextMessage({ message }: TextMessageProps) {
       )}
 
       {/* Text bubble */}
-      {message.content.length > 0 && (
+      {(message.content.length > 0 || message.isStreaming) && (
         <View
           className={
             isUser
@@ -50,6 +50,7 @@ export function TextMessage({ message }: TextMessageProps) {
             }
           >
             {message.content}
+            {message.isStreaming && <Text style={{ color: '#e65d2d' }}> &#9646;</Text>}
           </Text>
         </View>
       )}

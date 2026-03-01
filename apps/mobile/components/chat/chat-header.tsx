@@ -1,5 +1,6 @@
 import { View, Text, Pressable } from '@/src/tw';
 import { ConnectionStatus } from '@/components/connection-status';
+import type { SocketStatus } from '@/hooks/reconnecting-socket';
 
 const pressStyle = ({ pressed }: { pressed: boolean }) => ({
   opacity: pressed ? 0.85 : 1,
@@ -14,9 +15,11 @@ const pressStyle = ({ pressed }: { pressed: boolean }) => ({
 type ChatHeaderProps = {
   onSidebarPress: () => void;
   onSettingsPress: () => void;
+  socketStatus: SocketStatus;
+  onReconnect: () => void;
 };
 
-export function ChatHeader({ onSidebarPress, onSettingsPress }: ChatHeaderProps) {
+export function ChatHeader({ onSidebarPress, onSettingsPress, socketStatus, onReconnect }: ChatHeaderProps) {
   return (
     <View className="flex-row items-center justify-between px-4 py-3">
       <Pressable
@@ -26,7 +29,7 @@ export function ChatHeader({ onSidebarPress, onSettingsPress }: ChatHeaderProps)
       >
         <Text className="text-[13px] font-bold text-text-secondary">VH</Text>
       </Pressable>
-      <ConnectionStatus />
+      <ConnectionStatus status={socketStatus} onReconnect={onReconnect} />
       <Pressable
         onPress={onSettingsPress}
         style={pressStyle}

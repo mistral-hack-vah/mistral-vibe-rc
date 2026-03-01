@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { KeyboardAvoidingView } from 'react-native';
 import { View } from '@/src/tw';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -6,27 +6,22 @@ import { ChatHeader } from '@/components/chat/chat-header';
 import { SessionHistory } from '@/components/chat/session-history';
 import { InputModal } from '@/components/chat/input-modal';
 import { Sidebar } from '@/components/sidebar';
-import type { Message, Attachment } from '@/components/chat/types';
-import type { AudioRecording } from '@siteed/expo-audio-studio';
+import { useAgent } from '@/hooks/use-agent';
+import type { Attachment } from '@/components/chat/types';
 
 export default function HomeScreen() {
   const insets = useSafeAreaInsets();
   const [sidebarOpen, setSidebarOpen] = useState(false);
-  const [messages, setMessages] = useState<Message[]>([]);
+
+  const agent = useAgent();
+
+  // Connect on mount
+  useEffect(() => {
+    agent.connect();
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleSend = (text: string, attachments: Attachment[]) => {
-    const userMessage: Message = {
-      type: 'text',
-      role: 'user',
-      content: text,
-      attachments: attachments.length > 0 ? attachments : undefined,
-    };
-    setMessages((prev) => [...prev, userMessage]);
-  };
-
-  const handleAudioRecorded = (recording: AudioRecording) => {
-    // TODO: transcribe or send audio recording
-    console.log('Audio recorded:', recording.fileUri, recording.durationMs);
+    agent.sendTextMessage(text, attachments);
   };
 
   return (
@@ -39,12 +34,15 @@ export default function HomeScreen() {
         <ChatHeader
           onSidebarPress={() => setSidebarOpen(true)}
           onSettingsPress={() => {}}
+          socketStatus={agent.socketStatus}
+          onReconnect={() => agent.connect()}
         />
-        <SessionHistory messages={messages} />
+        <SessionHistory messages={agent.messages} />
         <View style={{ paddingBottom: Math.max(insets.bottom, 8) }}>
           <InputModal
             onSend={handleSend}
-            onAudioRecorded={handleAudioRecorded}
+            mode={agent.mode}
+            onModeChange={agent.setMode}
           />
         </View>
       </KeyboardAvoidingView>
