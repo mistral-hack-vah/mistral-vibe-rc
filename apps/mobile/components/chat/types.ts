@@ -11,6 +11,8 @@ export type TextMessage = {
   role: 'user' | 'assistant';
   content: string;
   attachments?: Attachment[];
+  isStreaming?: boolean;
+  timestamp?: number;
 };
 
 export type ToolCallMessage = {
@@ -24,4 +26,9 @@ export type AgentNotification = {
   content: string;
 };
 
-export type Message = TextMessage | ToolCallMessage | AgentNotification;
+export type StatusMessage = {
+  type: 'status';
+  status: 'recording' | 'transcribing';
+};
+
+export type Message = TextMessage | ToolCallMessage | AgentNotification | StatusMessage;

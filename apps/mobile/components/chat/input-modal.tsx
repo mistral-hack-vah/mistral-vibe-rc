@@ -1,12 +1,10 @@
 import { IconSymbol } from '@/components/ui/icon-symbol';
 import { useAudioSocket } from '@/hooks/use-audio-socket';
-import { useControlSocket } from '@/hooks/use-control-socket';
 import { Pressable, ScrollView, Text, TextInput, View } from '@/src/tw';
 import { Image } from '@/src/tw/image';
 import {
   ExpoAudioStreamModule,
   useAudioRecorder,
-  type AudioRecording,
   type RecordingConfig,
 } from '@siteed/expo-audio-studio';
 import * as ImagePicker from 'expo-image-picker';
@@ -39,7 +37,6 @@ function VoiceBar({ sv }: { sv: SharedValue<number> }) {
   return (
     <Animated.View
       style={[{
-        // flex: 1,
         width: 6,
         borderRadius: 17,
         overflow: 'hidden',
@@ -67,12 +64,12 @@ const pressStyle = ({ pressed }: { pressed: boolean }) => ({
 
 type InputModalProps = {
   onSend: (text: string, attachments: Attachment[]) => void;
-  onAudioRecorded?: (recording: AudioRecording) => void;
+  mode: 'plan' | 'build';
+  onModeChange: (mode: 'plan' | 'build') => void;
 };
 
-export function InputModal({ onSend, onAudioRecorded }: InputModalProps) {
+export function InputModal({ onSend, mode, onModeChange }: InputModalProps) {
   const [text, setText] = useState('');
-  const [mode, setMode] = useState<'plan' | 'build'>('plan');
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   const [autosend, setAutosend] = useState(true);
 
@@ -80,10 +77,12 @@ export function InputModal({ onSend, onAudioRecorded }: InputModalProps) {
     Array.from({ length: BAR_COUNT }, () => makeMutable(4))
   ).current;
 
+  const audioSocket = useAudioSocket();
+
   const recordingConfig = useRef<RecordingConfig>({
     interval: 100,
     enableProcessing: false,
-    sampleRate: 44100,
+    sampleRate: 16000,
     channels: 1,
     encoding: 'pcm_16bit',
     output: {
@@ -98,7 +97,6 @@ export function InputModal({ onSend, onAudioRecorded }: InputModalProps) {
       let amp = 0;
       if (typeof event.data !== 'string') {
         // Web: convert Float32Array to 16-bit PCM
-
         const pcm = new Int16Array(event.data.length);
         for (let i = 0; i < event.data.length; i++) {
           const s = Math.max(-1, Math.min(1, event.data[i]));
@@ -106,7 +104,7 @@ export function InputModal({ onSend, onAudioRecorded }: InputModalProps) {
         }
         buffer = pcm.buffer;
 
-        const data = event.data as unknown as Int16Array
+        const data = event.data as unknown as Int16Array;
         let sum = 0;
         for (let i = 0; i < data.length; i++) sum += (data[i] / 32768) ** 2;
         amp = Math.min(1, Math.sqrt(sum / data.length) * 6);
@@ -126,9 +124,8 @@ export function InputModal({ onSend, onAudioRecorded }: InputModalProps) {
         }
         amp = Math.min(1, Math.sqrt(sum / samples.length) * 6);
       }
-      // Skip tiny metadata/header chunks — real audio is ≥1000 bytes
+      // Skip tiny metadata/header chunks — real audio is >= 1000 bytes
       if (buffer.byteLength < 1000) return;
-      console.log(`[mic] chunk ${buffer.byteLength} bytes`);
       audioSocket.sendBinary(buffer);
 
       bars.forEach((sv, i) => {
@@ -144,21 +141,11 @@ export function InputModal({ onSend, onAudioRecorded }: InputModalProps) {
 
   const resetBars = useCallback(() => bars.forEach((sv) => (sv.value = withSpring(4))), [bars]);
 
-  const { status: controlStatus } = useControlSocket();
-  const audioSocket = useAudioSocket();
-  const micDisabled = controlStatus !== 'connected';
+  const micDisabled = audioSocket.status !== 'connected';
 
-  // Auto-connect audio socket as soon as control is established
-  useEffect(() => {
-    if (controlStatus === 'connected') {
-      audioSocket.connect();
-    }
-  }, [audioSocket, controlStatus]);
-
-  // Mic icon color based on audio socket status (dimmed when control not connected)
-  const micColor = micDisabled
-    ? '#555'
-    : audioSocket.status === 'connected'
+  // Mic icon color based on audio socket status
+  const micColor =
+    audioSocket.status === 'connected'
       ? '#34d399'
       : audioSocket.status === 'connecting'
         ? '#f59e0b'
@@ -189,9 +176,6 @@ export function InputModal({ onSend, onAudioRecorded }: InputModalProps) {
   };
 
   const handleMicPress = useCallback(async () => {
-    // Block until control socket is established
-    if (controlStatus !== 'connected') return;
-
     // If audio socket isn't connected, initiate connection first
     if (audioSocket.status !== 'connected') {
       audioSocket.connect();
@@ -201,30 +185,22 @@ export function InputModal({ onSend, onAudioRecorded }: InputModalProps) {
     const { status } = await ExpoAudioStreamModule.requestPermissionsAsync();
     if (status !== 'granted') return;
 
-    // Send audio_start frame
-    audioSocket.sendJSON({
-      type: 'audio_start',
-      sampleRate: recordingConfig.sampleRate,
-      encoding: recordingConfig.encoding,
-      channels: recordingConfig.channels,
-    });
-
+    // Tell server to start recording
+    audioSocket.sendStart();
     await startRecording(recordingConfig);
-  }, [startRecording, audioSocket, controlStatus, recordingConfig]);
+  }, [startRecording, audioSocket, recordingConfig]);
 
   const handleCancelRecording = useCallback(async () => {
     await stopRecording();
     resetBars();
-    audioSocket.sendJSON({ type: 'audio_end' });
-    // discard — don't fire onAudioRecorded
+    audioSocket.sendCancel();
   }, [stopRecording, audioSocket, resetBars]);
 
   const handleSendRecording = useCallback(async () => {
-    const result = await stopRecording();
+    await stopRecording();
     resetBars();
-    audioSocket.sendJSON({ type: 'audio_end' });
-    onAudioRecorded?.(result);
-  }, [stopRecording, onAudioRecorded, audioSocket, resetBars]);
+    audioSocket.sendStop();
+  }, [stopRecording, audioSocket, resetBars]);
 
   const pickImage = async () => {
     const result = await ImagePicker.launchImageLibraryAsync({
@@ -248,7 +224,7 @@ export function InputModal({ onSend, onAudioRecorded }: InputModalProps) {
     setAttachments((prev) => prev.filter((_, i) => i !== index));
   };
 
-  // ─── Recording UI ───
+  // --- Recording UI ---
   if (isRecording) {
     return (
       <View className="px-4 pb-2">
@@ -290,7 +266,7 @@ export function InputModal({ onSend, onAudioRecorded }: InputModalProps) {
     );
   }
 
-  // ─── Default text input UI ───
+  // --- Default text input UI ---
   return (
     <View className="px-4 pb-2">
       <View className="bg-bg-modal border border-border-soft rounded-2xl px-3.5 pt-3 pb-2.5">
@@ -324,7 +300,7 @@ export function InputModal({ onSend, onAudioRecorded }: InputModalProps) {
             <IconSymbol name="plus" size={20} color="#e5e5e5" />
           </Pressable>
           <View className="ml-2">
-            <ModeSelector mode={mode} onModeChange={setMode} />
+            <ModeSelector mode={mode} onModeChange={onModeChange} />
           </View>
           <View className="flex-1" />
           <Pressable
