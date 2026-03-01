@@ -3,6 +3,7 @@ import { Animated, Dimensions, TouchableWithoutFeedback } from 'react-native';
 import { View, Text, Pressable, ScrollView, TextInput } from '@/src/tw';
 import { IconSymbol } from '@/components/ui/icon-symbol';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useRouter } from 'expo-router';
 
 const SIDEBAR_WIDTH = 280;
 
@@ -28,6 +29,7 @@ const SESSION_GROUPS = ['Today', 'Previous 7 days', 'Previous 30 days'];
 
 export function Sidebar({ visible, onClose }: SidebarProps) {
   const insets = useSafeAreaInsets();
+  const router = useRouter();
 
   const translateX = useRef(new Animated.Value(-SIDEBAR_WIDTH)).current;
   const overlayOpacity = useRef(new Animated.Value(0)).current;
@@ -186,7 +188,13 @@ export function Sidebar({ visible, onClose }: SidebarProps) {
           </View>
 
           {/* Settings row */}
-          <View className="flex-row items-center px-4 py-3">
+          <Pressable
+            onPress={() => {
+              onClose();
+              router.push('/(tabs)/settings');
+            }}
+            className="flex-row items-center px-4 py-3"
+          >
             <View className="w-8 h-8 rounded-full bg-bg-button items-center justify-center">
               <Text className="text-xs font-bold text-text-primary">VR</Text>
             </View>
@@ -198,10 +206,8 @@ export function Sidebar({ visible, onClose }: SidebarProps) {
                 Le Chat Free
               </Text>
             </View>
-            <Pressable className="p-1">
-              <IconSymbol name="ellipsis" size={20} color="#b9b9ba" />
-            </Pressable>
-          </View>
+            <IconSymbol name="chevron.right" size={16} color="#b9b9ba" />
+          </Pressable>
         </View>
       </Animated.View>
     </View>
