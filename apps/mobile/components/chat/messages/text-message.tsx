@@ -2,6 +2,7 @@ import { View, Text } from '@/src/tw';
 import { Image } from '@/src/tw/image';
 import Markdown from 'react-native-markdown-display';
 import type { TextMessage as TextMessageType } from '../types';
+import { MistralSpinner } from './mistral-spinner';
 
 const codeBlockStyle = {
   backgroundColor: 'rgba(255,255,255,0.06)',
@@ -92,7 +93,11 @@ export function TextMessage({ message }: TextMessageProps) {
               >
                 {message.content}
               </Markdown>
-              {message.isStreaming && <Text style={{ color: '#e65d2d' }}> &#9646;</Text>}
+              {message.isStreaming && (
+                <View style={{ marginTop: 4, marginLeft: 2 }}>
+                  <MistralSpinner size={20} />
+                </View>
+              )}
             </>
           )}
         </View>
