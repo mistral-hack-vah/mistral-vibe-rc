@@ -31,6 +31,9 @@ const MAPPING = {
   'folder.badge.plus': 'create-new-folder',
   'bubble.left': 'chat-bubble-outline',
   'ellipsis': 'more-horiz',
+  'book': 'description',
+  'pencil': 'edit',
+  'play': 'play-arrow',
 } as IconMapping;
 
 /**

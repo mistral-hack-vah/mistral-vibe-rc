@@ -325,9 +325,9 @@ export function SettingsSidebar({
                 <View className="bg-bg-modal rounded-[16px] p-4 gap-3 border border-border-subtle">
                   {/* Permission toggles */}
                   {([
-                    { type: 'read' as PermissionType, icon: '📄', label: 'Read Files' },
-                    { type: 'edit' as PermissionType, icon: '✏️', label: 'Edit Files' },
-                    { type: 'execute' as PermissionType, icon: '⚡', label: 'Run Commands' },
+                    { type: 'read' as PermissionType, icon: 'book', label: 'Read Files' },
+                    { type: 'edit' as PermissionType, icon: 'pencil', label: 'Edit Files' },
+                    { type: 'execute' as PermissionType, icon: 'play', label: 'Run Commands' },
                   ]).map(({ type, icon, label }) => (
                     <Pressable
                       key={type}
@@ -338,15 +338,17 @@ export function SettingsSidebar({
                           onGrantPermission?.(type);
                         }
                       }}
-                      className="flex-row items-center justify-between py-2"
+                      className="flex-row items-center justify-between py-3"
                     >
                       <View className="flex-row items-center gap-3">
-                        <Text className="text-lg">{icon}</Text>
-                        <Text className="text-[14px] text-text-primary">{label}</Text>
+                        <View className="w-8 h-8 rounded-lg bg-bg-button items-center justify-center">
+                          <IconSymbol name={icon as any} size={18} color="white" />
+                        </View>
+                        <Text className="text-[15px] text-text-primary font-medium">{label}</Text>
                       </View>
                       <View
-                        className={`w-10 h-6 rounded-full ${
-                          permissions[type] ? 'bg-green-500' : 'bg-gray-600'
+                        className={`w-12 h-6 rounded-full ${
+                          permissions[type] ? 'bg-accent' : 'bg-gray-600'
                         } justify-center`}
                         style={{ paddingHorizontal: 2 }}
                       >
@@ -361,20 +363,20 @@ export function SettingsSidebar({
                   ))}
 
                   {/* Quick actions */}
-                  <View className="flex-row gap-2 pt-2 border-t border-border-subtle">
+                  <View className="flex-row gap-2 pt-3 border-t border-border-subtle mt-2">
                     <Pressable
                       onPress={onGrantAll}
-                      className="flex-1 items-center rounded-[10px] py-2.5 bg-green-500/20"
+                      className="flex-1 items-center rounded-lg py-3 bg-accent/20"
                     >
-                      <Text className="text-[13px] font-medium text-green-400">
+                      <Text className="text-[14px] font-medium text-accent">
                         Allow All
                       </Text>
                     </Pressable>
                     <Pressable
                       onPress={onRevokeAll}
-                      className="flex-1 items-center rounded-[10px] py-2.5 bg-red-500/20"
+                      className="flex-1 items-center rounded-lg py-3 bg-red-500/20"
                     >
-                      <Text className="text-[13px] font-medium text-red-400">
+                      <Text className="text-[14px] font-medium text-red-400">
                         Revoke All
                       </Text>
                     </Pressable>
