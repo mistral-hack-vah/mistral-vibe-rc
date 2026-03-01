@@ -148,9 +148,8 @@ export function Sidebar({ visible, onClose }: SidebarProps) {
                   {groupSessions.map((session) => (
                     <Pressable
                       key={session.id}
-                      className={`mx-2 px-3 py-3 rounded-button ${
-                        session.active ? 'bg-bg-button' : ''
-                      }`}
+                      className={`mx-2 px-3 py-3 rounded-button ${session.active ? 'bg-bg-button' : ''
+                        }`}
                     >
                       <Text
                         className="text-sm text-text-primary"
@@ -203,7 +202,7 @@ export function Sidebar({ visible, onClose }: SidebarProps) {
                 Personal
               </Text>
               <Text className="text-xs text-text-secondary">
-                Le Chat Free
+                {'"Mistral" Thread'}
               </Text>
             </View>
             <IconSymbol name="chevron.right" size={16} color="#b9b9ba" />
