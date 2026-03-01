@@ -10,6 +10,39 @@ type SessionHistoryProps = {
   messages: Message[];
 };
 
+function MistralLogo({ size = 64 }: { size?: number }) {
+  const unit = size / 16;
+  const px = (x: number, y: number, w: number, h: number, color: string) => (
+    <View
+      key={`${x}-${y}`}
+      style={{
+        position: 'absolute',
+        left: x * unit,
+        top: y * unit,
+        width: w * unit,
+        height: h * unit,
+        backgroundColor: color,
+      }}
+    />
+  );
+
+  return (
+    <View style={{ width: size, height: size, position: 'relative' }}>
+      {/* Battlements */}
+      {px(1, 4, 2, 2, '#F5A623')}
+      {px(5, 4, 2, 2, '#F5A623')}
+      {px(9, 4, 2, 2, '#F5A623')}
+      {px(13, 4, 2, 2, '#F5A623')}
+      {/* Wall */}
+      {px(1, 6, 14, 7, '#F5631A')}
+      {/* Gate */}
+      {px(6, 9, 4, 4, '#CC3300')}
+      {/* Base */}
+      {px(3, 13, 10, 2, '#CC3300')}
+    </View>
+  );
+}
+
 function StatusIndicator({ status }: { status: 'recording' | 'transcribing' }) {
   const label = status === 'recording' ? 'Recording...' : 'Transcribing...';
   const color = status === 'recording' ? '#ef4444' : '#f59e0b';
@@ -41,10 +74,7 @@ export function SessionHistory({ messages }: SessionHistoryProps) {
   if (messages.length === 0) {
     return (
       <View className="flex-1 items-center justify-center">
-        <Text className="text-[32px] font-bold text-accent tracking-tight">
-          Le Thread
-        </Text>
-        <Text className="text-sm text-text-secondary mt-1">Vibe on the go</Text>
+        <MistralLogo size={96} />
       </View>
     );
   }
