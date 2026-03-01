@@ -228,14 +228,15 @@ async def stream_agent_with_tts(
         await event_queue.put(
             {"event": "agent_done", "data": json.dumps({"text": full_response})}
         )
-        for edit in get_git_diffs():
-            await event_queue.put({"event": "edit", "data": json.dumps(edit)})
 
         # Flush remaining sentence buffer to TTS
         remaining = clean_for_tts(sentence_buffer.strip())
         if remaining:
             await sentence_queue.put(remaining)
         await sentence_queue.put(None)  # signal TTS worker to stop
+
+        for edit in get_git_diffs():
+            await event_queue.put({"event": "edit", "data": json.dumps(edit)})
 
     async def tts_worker() -> None:
         has_tts = bool(os.environ.get("ELEVENLABS_API_KEY"))
