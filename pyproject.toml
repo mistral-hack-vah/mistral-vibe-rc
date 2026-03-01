@@ -3,4 +3,20 @@ name = "vibe-remote-control"
 version = "0.1.0"
 description = "Add your description here"
 requires-python = ">=3.12"
-dependencies = []
+dependencies = [
+    "fastapi>=0.134.0",
+    "httpx>=0.28.1",
+    "mistralai>=1.0.0",
+    "numpy>=2.0.0",
+    "pyjwt>=2.11.0",
+    "pytest>=9.0.2",
+    "pytest-asyncio>=0.23.0",
+    "uvicorn>=0.34.0",
+    "websockets>=13.0",
+    "pyaudio>=0.2.14",
+    "simple-acp-client>=0.1.6",
+]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+asyncio_mode = "auto"
