@@ -14,10 +14,9 @@ export type TextMessage = {
 };
 
 export type ToolCallMessage = {
-  type: 'tool_call';
-  name: string;
-  args: string;
-  result?: string;
+  type: 'edit';
+  filePath: string;
+  diff: string;
 };
 
 export type AgentNotification = {

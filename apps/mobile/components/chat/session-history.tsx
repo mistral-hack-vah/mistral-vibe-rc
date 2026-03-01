@@ -3,8 +3,8 @@ import { View, Text } from '@/src/tw';
 import { ScrollView as RNScrollView } from 'react-native';
 import type { Message } from './types';
 import { TextMessage } from './messages/text-message';
-import { ToolCallMessage } from './messages/tool-call-message';
 import { AgentNotification } from './messages/agent-notification';
+import { EditMessage } from './messages/edit-message';
 
 type SessionHistoryProps = {
   messages: Message[];
@@ -14,10 +14,10 @@ function MessageItem({ message }: { message: Message }) {
   switch (message.type) {
     case 'text':
       return <TextMessage message={message} />;
-    case 'tool_call':
-      return <ToolCallMessage message={message} />;
     case 'notification':
       return <AgentNotification message={message} />;
+    case 'edit':
+      return <EditMessage message={message} />;
   }
 }
 

@@ -6,6 +6,7 @@ const WS_URL = 'ws://localhost:14096/ws/audio';
 let socket: ReconnectingSocket | null = null;
 let currentStatus: SocketStatus = 'idle';
 const listeners = new Set<() => void>();
+const messageListeners = new Set<(data: string | ArrayBuffer) => void>();
 
 function getSocket(): ReconnectingSocket {
   if (!socket) {
@@ -16,6 +17,7 @@ function getSocket(): ReconnectingSocket {
         currentStatus = s;
         listeners.forEach((l) => l());
       },
+      onMessage: (data) => messageListeners.forEach((l) => l(data)),
     });
   }
   return socket;
@@ -44,5 +46,9 @@ export function useAudioSocket() {
     reconnect: () => sock.connect(),
     sendBinary: (data: ArrayBuffer) => sock.sendBinary(data),
     sendJSON: (obj: Record<string, unknown>) => sock.send(JSON.stringify(obj)),
+    subscribeMessages: (fn: (data: string | ArrayBuffer) => void) => {
+      messageListeners.add(fn);
+      return () => messageListeners.delete(fn);
+    },
   };
 }

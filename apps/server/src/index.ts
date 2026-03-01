@@ -51,6 +51,20 @@ app.get(
           } else if (msg.type === 'audio_end') {
             console.log(`[ws/audio] ← audio_end (${chunkIndex} chunks, ${totalBytes} bytes total)`);
             streaming = false;
+            const words = "I'll update the className to add proper flex alignment.".split(' ');
+            let i = 0;
+            const interval = setInterval(() => {
+              ws.send(JSON.stringify({ type: 'text', content: words[i] + (i < words.length - 1 ? ' ' : '') }));
+              i++;
+              if (i >= words.length) {
+                clearInterval(interval);
+                ws.send(JSON.stringify({
+                  type: 'edit',
+                  filePath: 'components/sidebar.tsx',
+                  diff: `--- a/components/sidebar.tsx\n+++ b/components/sidebar.tsx\n@@ -1,4 +1,4 @@\n-<Pressable className="flex-row i\n+<Pressable className="flex-row items-center justify-between"\n `,
+                }));
+              }
+            }, 80);
           } else {
             console.log('[ws/audio] ←', event.data);
           }

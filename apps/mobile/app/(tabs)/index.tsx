@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { KeyboardAvoidingView } from 'react-native';
 import { View } from '@/src/tw';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -8,11 +8,34 @@ import { InputModal } from '@/components/chat/input-modal';
 import { Sidebar } from '@/components/sidebar';
 import type { Message, Attachment } from '@/components/chat/types';
 import type { AudioRecording } from '@siteed/expo-audio-studio';
+import { useAudioSocket } from '@/hooks/use-audio-socket';
 
 export default function HomeScreen() {
   const insets = useSafeAreaInsets();
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [messages, setMessages] = useState<Message[]>([]);
+  const audioSocket = useAudioSocket();
+
+  useEffect(() => {
+    return audioSocket.subscribeMessages((data) => {
+      if (typeof data !== 'string') return;
+      try {
+        const msg = JSON.parse(data);
+        if (msg.type === 'text') {
+          setMessages((prev) => {
+            const last = prev[prev.length - 1];
+            if (last?.type === 'text' && last.role === 'assistant') {
+              return [...prev.slice(0, -1), { ...last, content: last.content + msg.content }];
+            }
+            return [...prev, { type: 'text', role: 'assistant', content: msg.content }];
+          });
+        }
+        if (msg.type === 'edit') {
+          setMessages((prev) => [...prev, { type: 'edit', filePath: msg.filePath, diff: msg.diff }]);
+        }
+      } catch {}
+    });
+  }, []);
 
   const handleSend = (text: string, attachments: Attachment[]) => {
     const userMessage: Message = {
