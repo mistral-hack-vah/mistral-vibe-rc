@@ -216,6 +216,7 @@ async def send_message(
                     }
             except Exception as e:
                 print(f"[TTS Error] {e}", flush=True)
+            yield {"event": "tts_done", "data": json.dumps({})}
 
     return EventSourceResponse(generate_events())
 
@@ -398,6 +399,7 @@ async def ws_audio(websocket: WebSocket):
                                     await ws_send(websocket, "audio_delta", {"audio": audio_b64})
                             except Exception as e:
                                 print(f"[TTS Error] {e}", flush=True)
+                            await ws_send(websocket, "tts_done", {})
                     else:
                         await ws_send(websocket, "transcript", {"text": ""})
 
