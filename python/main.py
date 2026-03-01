@@ -15,6 +15,7 @@ WebSocket Endpoint:
 Audio Format: PCM16 mono 16 kHz
 """
 
+import asyncio
 import base64
 import json
 import os
@@ -188,30 +189,66 @@ async def send_message(
         if default_repo:
             workdir = default_repo.path
 
+    MAX_RETRIES = 3
+    RETRY_DELAY = 2  # seconds
+
     async def generate_events() -> AsyncIterator[dict]:
         yield {"event": "agent_start", "data": json.dumps({})}
 
         full_response = ""
-        try:
-            async for delta in get_strands_agent_service().stream_response(
-                session_id=request.session_id,
-                user_message=request.text,
-                image_uris=request.image_uris,
-                workdir=workdir,
-            ):
-                # Check for interrupt
-                if session_manager.is_interrupted(request.session_id):
+        last_error = None
+
+        for attempt in range(1, MAX_RETRIES + 1):
+            try:
+                # Reset response for retry
+                if attempt > 1:
+                    full_response = ""
+
+                async for delta in get_strands_agent_service().stream_response(
+                    session_id=request.session_id,
+                    user_message=request.text,
+                    image_uris=request.image_uris,
+                    workdir=workdir,
+                ):
+                    # Check for interrupt
+                    if session_manager.is_interrupted(request.session_id):
+                        break
+
+                    full_response += delta
+                    yield {"event": "agent_delta", "data": json.dumps({"text": delta})}
+
+                # Success - break out of retry loop
+                last_error = None
+                break
+
+            except Exception as e:
+                last_error = e
+                tb = traceback.format_exc()
+                print(f"[Agent Error] Attempt {attempt}/{MAX_RETRIES}\n{tb}", flush=True)
+
+                # Check if we should retry
+                if attempt < MAX_RETRIES and not session_manager.is_interrupted(request.session_id):
+                    # Send retry notification to UI
+                    yield {
+                        "event": "retry",
+                        "data": json.dumps({
+                            "attempt": attempt + 1,
+                            "max_attempts": MAX_RETRIES,
+                            "reason": f"{type(e).__name__}: {str(e)[:100]}",
+                        }),
+                    }
+                    # Wait before retrying
+                    import asyncio
+                    await asyncio.sleep(RETRY_DELAY)
+                else:
+                    # Final attempt failed or interrupted
                     break
 
-                full_response += delta
-                yield {"event": "agent_delta", "data": json.dumps({"text": delta})}
-
-        except Exception as e:
-            tb = traceback.format_exc()
-            print(f"[Agent Error]\n{tb}", flush=True)
+        # If we exhausted retries with an error, report it
+        if last_error is not None:
             yield {
                 "event": "error",
-                "data": json.dumps({"message": f"{type(e).__name__}: {e}"}),
+                "data": json.dumps({"message": f"{type(last_error).__name__}: {last_error}"}),
             }
 
         yield {"event": "agent_done", "data": json.dumps({"text": full_response})}
@@ -463,28 +500,62 @@ async def ws_audio(websocket: WebSocket):
                     if transcript:
                         await ws_send(websocket, "transcript", {"text": transcript})
 
-                        # Stream agent response
+                        # Stream agent response with retry logic
                         await ws_send(websocket, "agent_start", {})
                         full_response = ""
+                        last_error = None
+                        max_retries = 3
+                        retry_delay = 2  # seconds
 
-                        try:
-                            async for delta in get_strands_agent_service().stream_response(
-                                session_id=session_id,
-                                user_message=transcript,
-                                workdir=workdir,
-                            ):
-                                if session_manager.is_interrupted(session_id):
+                        for attempt in range(1, max_retries + 1):
+                            try:
+                                # Reset response for retry
+                                if attempt > 1:
+                                    full_response = ""
+
+                                async for delta in get_strands_agent_service().stream_response(
+                                    session_id=session_id,
+                                    user_message=transcript,
+                                    workdir=workdir,
+                                ):
+                                    if session_manager.is_interrupted(session_id):
+                                        break
+                                    full_response += delta
+                                    await ws_send(websocket, "agent_delta", {"text": delta})
+
+                                # Success - break out of retry loop
+                                last_error = None
+                                break
+
+                            except Exception as agent_err:
+                                last_error = agent_err
+                                tb = traceback.format_exc()
+                                print(f"[Agent Error] Attempt {attempt}/{max_retries}\n{tb}", flush=True)
+
+                                # Check if we should retry
+                                if attempt < max_retries and not session_manager.is_interrupted(session_id):
+                                    # Send retry notification to UI
+                                    await ws_send(
+                                        websocket,
+                                        "retry",
+                                        {
+                                            "attempt": attempt + 1,
+                                            "max_attempts": max_retries,
+                                            "reason": f"{type(agent_err).__name__}: {str(agent_err)[:100]}",
+                                        },
+                                    )
+                                    # Wait before retrying
+                                    await asyncio.sleep(retry_delay)
+                                else:
+                                    # Final attempt failed or interrupted
                                     break
-                                full_response += delta
-                                await ws_send(websocket, "agent_delta", {"text": delta})
 
-                        except Exception as e:
-                            tb = traceback.format_exc()
-                            print(f"[Agent Error]\n{tb}", flush=True)
+                        # If we exhausted retries with an error, report it
+                        if last_error is not None:
                             await ws_send(
                                 websocket,
                                 "error",
-                                {"message": f"Agent error: {type(e).__name__}: {e}"},
+                                {"message": f"Agent error: {type(last_error).__name__}: {last_error}"},
                             )
 
                         await ws_send(websocket, "agent_done", {"text": full_response})

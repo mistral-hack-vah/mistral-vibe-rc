@@ -13,12 +13,19 @@ import * as api from './api-client';
 import type { RepoConfig } from './api-client';
 import type { Message, Attachment } from '@/components/chat/types';
 
-export type AgentStatus = 'idle' | 'recording' | 'transcribing' | 'responding';
+export type AgentStatus = 'idle' | 'recording' | 'transcribing' | 'responding' | 'retrying';
+
+export type RetryInfo = {
+  attempt: number;
+  maxAttempts: number;
+  reason: string;
+};
 
 export function useAgent() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [status, setStatus] = useState<AgentStatus>('idle');
   const [mode, setMode] = useState<'plan' | 'build'>('plan');
+  const [retryInfo, setRetryInfo] = useState<RetryInfo | null>(null);
 
   // Repository state
   const [repos, setRepos] = useState<RepoConfig[]>([]);
@@ -91,6 +98,7 @@ export function useAgent() {
 
         case 'agent_start':
           setStatus('responding');
+          setRetryInfo(null); // Clear any previous retry info
           // Append empty streaming assistant message
           setMessages((prev) => [
             ...prev,
@@ -103,6 +111,26 @@ export function useAgent() {
             },
           ]);
           break;
+
+        case 'retry': {
+          const attempt = event.data.attempt as number;
+          const maxAttempts = event.data.max_attempts as number;
+          const reason = event.data.reason as string;
+          console.log(`[useAgent] Retrying... attempt ${attempt}/${maxAttempts}: ${reason}`);
+
+          setStatus('retrying');
+          setRetryInfo({ attempt, maxAttempts, reason });
+
+          // Add a notification message about the retry
+          setMessages((prev) => [
+            ...prev,
+            {
+              type: 'notification',
+              content: `Retrying (${attempt}/${maxAttempts})... This may take a bit longer.`,
+            },
+          ]);
+          break;
+        }
 
         case 'agent_delta': {
           const delta = event.data.text as string;
@@ -124,6 +152,7 @@ export function useAgent() {
         case 'agent_done': {
           const fullText = event.data.text as string;
           setStatus('idle');
+          setRetryInfo(null); // Clear retry info on completion
           setMessages((prev) => {
             const updated = [...prev];
             for (let i = updated.length - 1; i >= 0; i--) {
@@ -344,6 +373,7 @@ export function useAgent() {
   return {
     messages,
     status,
+    retryInfo,
     sessionId: sessionIdRef.current,
     socketStatus: audioSocket.status,
     mode,

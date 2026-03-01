@@ -115,6 +115,17 @@ class StateData(BaseModel):
     status: str
 
 
+class RetryEvent(BaseModel):
+    event: Literal["retry"] = "retry"
+    data: RetryData
+
+
+class RetryData(BaseModel):
+    attempt: int
+    max_attempts: int
+    reason: str
+
+
 # ---------------------------------------------------------------------------
 # REST Request/Response Models
 # ---------------------------------------------------------------------------
@@ -184,4 +195,5 @@ ServerEvent = (
     | HistoryEvent
     | ErrorEvent
     | StateEvent
+    | RetryEvent
 )
