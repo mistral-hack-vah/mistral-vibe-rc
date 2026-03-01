@@ -16,6 +16,7 @@ Usage example:
 """
 
 import asyncio
+import json
 import os
 import queue
 import subprocess
@@ -27,14 +28,49 @@ class VibeExecutor:
     """
     Subprocess wrapper around the Mistral Vibe CLI.
 
+    Uses --output streaming (newline-delimited JSON per message) so each
+    assistant message is yielded as soon as it is complete — no waiting for
+    all tool turns to finish before the first text arrives.
+
     Config via env vars:
         VIBE_CLI_PATH   — path/name of the CLI binary (default: "vibe")
-        VIBE_TIMEOUT    — max seconds to wait for a response (default: 60)
+        VIBE_TIMEOUT    — max seconds between lines (default: 120)
     """
 
     def __init__(self) -> None:
         self.cli_path = os.environ.get("VIBE_CLI_PATH", "vibe")
-        self.timeout = float(os.environ.get("VIBE_TIMEOUT", "60"))
+        self.timeout = float(os.environ.get("VIBE_TIMEOUT", "120"))
+
+    @staticmethod
+    def _extract_text(line: str) -> str:
+        """
+        Pull human-readable text out of a vibe streaming JSON line.
+        The format is one JSON object per line; assistant messages carry
+        the response text in a 'content' field.
+        """
+        try:
+            obj = json.loads(line)
+        except json.JSONDecodeError:
+            # Fall back to treating the raw line as text
+            return line
+
+        role = obj.get("role", "")
+        # Only surface assistant / text messages — skip tool calls / results
+        if role and role != "assistant":
+            return ""
+
+        content = obj.get("content") or obj.get("text") or obj.get("message") or ""
+        if isinstance(content, list):
+            # Some formats use a list of content blocks
+            parts = []
+            for block in content:
+                if isinstance(block, dict):
+                    parts.append(block.get("text") or block.get("content") or "")
+                elif isinstance(block, str):
+                    parts.append(block)
+            content = "".join(parts)
+
+        return str(content)
 
     async def execute(
         self,
@@ -42,25 +78,24 @@ class VibeExecutor:
         session_id: str,
     ) -> AsyncIterator[str]:
         """
-        Send *command_text* to the Vibe CLI and stream output lines.
+        Send *command_text* to the Vibe CLI and stream assistant text.
 
-        Runs the subprocess in a thread so it works with any asyncio event
-        loop (including uvicorn's SelectorEventLoop on Windows).
-
-        Yields:
-            One non-empty stripped line at a time from the CLI's stdout.
-
-        Raises:
-            RuntimeError  — if the CLI exits with a non-zero code.
+        Uses --output streaming so each complete message is yielded as a
+        separate line without waiting for all tool turns to finish.
         """
         env = os.environ.copy()
         env["PYTHONUTF8"] = "1"
+        env["PYTHONUNBUFFERED"] = "1"  # prevent subprocess output buffering
 
         line_queue: queue.Queue = queue.Queue()
 
         def _run() -> None:
             proc = subprocess.Popen(
-                [self.cli_path, "-p", command_text.strip(), "--output", "text"],
+                [
+                    self.cli_path,
+                    "-p", command_text.strip(),
+                    "--output", "streaming",
+                ],
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 env=env,
@@ -95,4 +130,6 @@ class VibeExecutor:
                 break
             if isinstance(item, Exception):
                 raise item
-            yield item
+            text = self._extract_text(item)
+            if text:
+                yield text

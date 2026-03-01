@@ -293,6 +293,150 @@ class TestPushToTalk:
 
 
 # ===========================================================================
+# Voice Interrupt Tests
+# ===========================================================================
+
+class TestVoiceInterrupt:
+    """
+    Tests the voice interrupt flow:
+      record → agent starts responding → user presses mic → interrupt →
+      agent task cancelled immediately → new recording → new response.
+    """
+
+    @pytest.fixture
+    def slow_agent(self, monkeypatch):
+        """
+        Agent that pauses mid-stream so we can interrupt it.
+        The agent checks the interrupted flag every 50 ms and exits cleanly.
+        """
+        import threading
+
+        pause = threading.Event()
+
+        class SlowFakeAgent:
+            resume_event = pause
+
+            async def stream_response(self, session_id, user_message, image_uris=None):
+                yield "Starting response... "
+                import asyncio
+                while not pause.is_set():
+                    if session_manager.is_interrupted(session_id):
+                        return
+                    await asyncio.sleep(0.05)
+                yield "This part should not arrive after interrupt."
+
+        monkeypatch.setattr("python.main.get_strands_agent_service", lambda: SlowFakeAgent())
+        return pause
+
+    def _drain_until(self, ws, target_event: str, max_msgs: int = 100) -> list:
+        """Receive messages until target_event is seen. Returns all received events."""
+        events = []
+        for _ in range(max_msgs):
+            msg = json.loads(ws.receive_text())
+            events.append(msg)
+            if msg["event"] == target_event:
+                break
+        return events
+
+    def test_interrupt_stops_agent_mid_stream(self, client, slow_agent):
+        """
+        With the background-task architecture, the main receive loop is always live.
+        Sending interrupt while the agent is streaming cancels the task immediately.
+        """
+        token = make_token("user-1")
+
+        with client.websocket_connect(f"/ws/audio?token={token}") as ws:
+            _ = json.loads(ws.receive_text())  # session
+
+            # Start recording
+            ws.send_text(json.dumps({"type": "start"}))
+            _ = json.loads(ws.receive_text())  # recording started
+            ws.send_bytes(b"\x00" * 1600)
+            ws.send_text(json.dumps({"type": "stop"}))
+
+            # Drain until we see the first agent_delta (background task is streaming)
+            events = self._drain_until(ws, "agent_delta")
+            event_names = [e["event"] for e in events]
+            assert "agent_start" in event_names
+            assert "agent_delta" in event_names
+
+            # VOICE INTERRUPT — main loop is free to receive this immediately
+            ws.send_text(json.dumps({"type": "interrupt"}))
+
+            # There may be buffered audio events already in the send queue;
+            # drain past them until we find state:interrupted
+            events = self._drain_until(ws, "state")
+            state_events = [e for e in events if e["event"] == "state"]
+            assert state_events, "Expected a state:interrupted event"
+            assert state_events[0]["data"]["status"] == "interrupted"
+
+            # Verify interrupted flag is set
+            session_id = next(iter(session_manager._sessions))
+            assert session_manager.is_interrupted(session_id)
+
+    def test_new_recording_works_immediately_after_interrupt(self, client, patch_singletons):
+        """After interrupt, a new recording starts cleanly and produces a full response."""
+        fake_processor, _ = patch_singletons
+        token = make_token("user-1")
+
+        with client.websocket_connect(f"/ws/audio?token={token}") as ws:
+            _ = json.loads(ws.receive_text())  # session
+
+            # === First recording — let it complete ===
+            fake_processor._transcript = "tell me something"
+            ws.send_text(json.dumps({"type": "start"}))
+            _ = json.loads(ws.receive_text())  # recording started
+            ws.send_bytes(b"\x00" * 1600)
+            ws.send_text(json.dumps({"type": "stop"}))
+            self._drain_until(ws, "tts_done")
+
+            # === Interrupt (stream already done — verifies the flag round-trip) ===
+            ws.send_text(json.dumps({"type": "interrupt"}))
+            events = self._drain_until(ws, "state")
+            state_events = [e for e in events if e["event"] == "state"]
+            assert state_events, "Expected state:interrupted"
+            assert state_events[0]["data"]["status"] == "interrupted"
+
+            # === Second recording — immediately after interrupt ===
+            fake_processor._transcript = "never mind, different question"
+            ws.send_text(json.dumps({"type": "start"}))
+            msg = json.loads(ws.receive_text())
+            assert msg["event"] == "recording"
+            assert msg["data"]["status"] == "started"
+
+            ws.send_bytes(b"\x00" * 1600)
+            ws.send_text(json.dumps({"type": "stop"}))
+
+            events = self._drain_until(ws, "tts_done")
+            event_names = [e["event"] for e in events]
+
+            assert "transcript" in event_names
+            assert "agent_start" in event_names
+            assert "agent_done" in event_names
+
+            transcript_event = next(e for e in events if e["event"] == "transcript")
+            assert transcript_event["data"]["text"] == "never mind, different question"
+
+    def test_interrupt_flag_cleared_on_new_start(self, client):
+        """The interrupted flag is cleared when a new recording starts."""
+        token = make_token("user-1")
+
+        with client.websocket_connect(f"/ws/audio?token={token}") as ws:
+            _ = json.loads(ws.receive_text())  # session
+
+            # Set the flag via interrupt
+            ws.send_text(json.dumps({"type": "interrupt"}))
+            _ = json.loads(ws.receive_text())  # state: interrupted
+
+            # Start new recording — flag should be cleared
+            ws.send_text(json.dumps({"type": "start"}))
+            _ = json.loads(ws.receive_text())  # recording started
+
+            session_id = next(iter(session_manager._sessions))
+            assert not session_manager.is_interrupted(session_id)
+
+
+# ===========================================================================
 # REST API Tests
 # ===========================================================================
 

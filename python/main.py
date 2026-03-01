@@ -458,6 +458,37 @@ async def ws_audio(websocket: WebSocket):
 
     await ws_send(websocket, "session", {"session_id": session_id})
 
+    # ---- Per-connection state ----
+    # Lock ensures the background agent task and main loop never interleave sends.
+    send_lock = asyncio.Lock()
+    agent_stream_task: Optional[asyncio.Task] = None
+
+    async def safe_send(event: str, data: dict[str, Any]) -> None:
+        async with send_lock:
+            await websocket.send_text(json.dumps({"event": event, "data": data}))
+
+    async def run_agent_stream(transcript: str) -> None:
+        """Background task: streams agent + TTS while main loop stays live for interrupt."""
+        try:
+            async for event in stream_agent_with_tts(
+                session_id=session_id,
+                user_message=transcript,
+            ):
+                event_data = json.loads(event["data"])
+                await safe_send(event["event"], event_data)
+        except asyncio.CancelledError:
+            pass
+
+    async def cancel_agent_stream() -> None:
+        nonlocal agent_stream_task
+        if agent_stream_task and not agent_stream_task.done():
+            agent_stream_task.cancel()
+            try:
+                await agent_stream_task
+            except asyncio.CancelledError:
+                pass
+        agent_stream_task = None
+
     # ---- Main Loop ----
     try:
         while True:
@@ -468,55 +499,52 @@ async def ws_audio(websocket: WebSocket):
                 try:
                     payload = json.loads(msg["text"])
                 except json.JSONDecodeError:
-                    await ws_send(websocket, "error", {"message": "Invalid JSON"})
+                    await safe_send("error", {"message": "Invalid JSON"})
                     continue
 
                 msg_type = payload.get("type")
 
                 if msg_type == "start":
-                    # Begin recording
+                    # Cancel any running stream, then begin new recording
+                    await cancel_agent_stream()
                     audio_processor.start_recording(session_id)
                     session_manager.clear_interrupted(session_id)
-                    await ws_send(websocket, "recording", {"status": "started"})
+                    await safe_send("recording", {"status": "started"})
 
                 elif msg_type == "stop":
-                    # Stop recording, transcribe, run agent + TTS
-                    await ws_send(websocket, "recording", {"status": "stopped"})
-                    await ws_send(websocket, "transcribing", {})
+                    # Stop recording, transcribe, launch agent + TTS as background task
+                    await safe_send("recording", {"status": "stopped"})
+                    await safe_send("transcribing", {})
 
                     transcript = await audio_processor.stop_and_transcribe(session_id)
 
                     if transcript:
-                        await ws_send(websocket, "transcript", {"text": transcript})
-
-                        # Stream agent response with interleaved TTS
-                        async for event in stream_agent_with_tts(
-                            session_id=session_id,
-                            user_message=transcript,
-                        ):
-                            event_data = json.loads(event["data"])
-                            await ws_send(websocket, event["event"], event_data)
+                        await safe_send("transcript", {"text": transcript})
+                        agent_stream_task = asyncio.create_task(
+                            run_agent_stream(transcript)
+                        )
                     else:
-                        await ws_send(websocket, "transcript", {"text": ""})
+                        await safe_send("transcript", {"text": ""})
 
                 elif msg_type == "cancel":
                     # Cancel recording without transcribing
                     audio_processor.cancel_recording(session_id)
-                    await ws_send(websocket, "recording", {"status": "cancelled"})
+                    await safe_send("recording", {"status": "cancelled"})
 
                 elif msg_type == "interrupt":
-                    # Interrupt agent stream
+                    # Stop agent stream immediately, then signal client
                     session_manager.set_interrupted(session_id, True)
-                    await ws_send(websocket, "state", {"status": "interrupted"})
+                    await cancel_agent_stream()
+                    await safe_send("state", {"status": "interrupted"})
 
                 elif msg_type == "init":
                     # Send session history
                     turns = session_manager.get_turns(session_id)
-                    await ws_send(websocket, "history", {"turns": turns})
+                    await safe_send("history", {"turns": turns})
 
                 else:
-                    await ws_send(
-                        websocket, "error", {"message": f"Unknown type: {msg_type}"}
+                    await safe_send(
+                        "error", {"message": f"Unknown type: {msg_type}"}
                     )
 
             # Binary frame -> audio chunk
@@ -528,11 +556,11 @@ async def ws_audio(websocket: WebSocket):
         pass
     except Exception as e:
         try:
-            await ws_send(websocket, "error", {"message": str(e)})
+            await safe_send("error", {"message": str(e)})
         except Exception:
             pass
     finally:
-        # Clean up recording state on disconnect
+        await cancel_agent_stream()
         audio_processor.cancel_recording(session_id)
         try:
             await websocket.close()
