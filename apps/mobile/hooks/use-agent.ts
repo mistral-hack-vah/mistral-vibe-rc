@@ -194,31 +194,10 @@ export function useAgent(options: UseAgentOptions = {}) {
         case 'edit': {
           const { filePath, diff } = event.data as { filePath: string; diff: string };
           if (filePath && diff) {
-            // Show pending edit, then request permission
-            const editMsg: Message = { type: 'edit', filePath, diff, status: 'pending' };
-            setMessages((prev) => [...prev, editMsg]);
-
-            // Request permission asynchronously
-            if (requestPermission) {
-              requestPermission('edit', 'Edit file', filePath).then((granted) => {
-                setMessages((prev) =>
-                  prev.map((m) =>
-                    m.type === 'edit' && m.filePath === filePath && m.status === 'pending'
-                      ? { ...m, status: granted ? 'approved' : 'denied' }
-                      : m
-                  )
-                );
-              });
-            } else {
-              // No permission system, auto-approve
-              setMessages((prev) =>
-                prev.map((m) =>
-                  m.type === 'edit' && m.filePath === filePath && m.status === 'pending'
-                    ? { ...m, status: 'approved' }
-                    : m
-                )
-              );
-            }
+            setMessages((prev) => [
+              ...prev,
+              { type: 'edit', filePath, diff },
+            ]);
           }
           break;
         }

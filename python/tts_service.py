@@ -13,7 +13,7 @@ from typing import AsyncIterator
 import httpx
 
 ELEVENLABS_API_URL = "https://api.elevenlabs.io/v1"
-DEFAULT_VOICE_ID = "pNInz6obpgDQGcFmaJgB"  # Adam
+DEFAULT_VOICE_ID = "xNtG3W2oqJs0cJZuTyBc"
 DEFAULT_MODEL_ID = "eleven_turbo_v2_5"
 
 
@@ -63,11 +63,16 @@ async def stream_tts(text: str) -> AsyncIterator[bytes]:
                 },
             },
         ) as response:
-            print(f"[TTS] ElevenLabs response status={response.status_code}", flush=True)
+            print(
+                f"[TTS] ElevenLabs response status={response.status_code}", flush=True
+            )
             response.raise_for_status()
             async for chunk in response.aiter_bytes(chunk_size=4096):
                 if chunk:
                     chunk_count += 1
                     total_bytes += len(chunk)
                     yield chunk
-    print(f"[TTS] stream_tts done: {chunk_count} chunks, {total_bytes} bytes total", flush=True)
+    print(
+        f"[TTS] stream_tts done: {chunk_count} chunks, {total_bytes} bytes total",
+        flush=True,
+    )
