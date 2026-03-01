@@ -15,6 +15,7 @@ WebSocket Endpoint:
 Audio Format: PCM16 mono 16 kHz
 """
 
+import asyncio
 import base64
 import json
 import os
@@ -49,6 +50,7 @@ from python.schemas import (
 from python.vibe_agent import get_vibe_agent_service as get_strands_agent_service
 from python.session_manager import session_manager
 from python.tts_service import stream_tts
+from python.tts_utils import clean_for_tts, extract_sentences
 
 
 # ---------------------------------------------------------------------------
@@ -130,6 +132,115 @@ async def get_current_user(authorization: str = Header(None)) -> str:
 
 
 # ---------------------------------------------------------------------------
+# Parallel Agent + TTS Streaming
+# ---------------------------------------------------------------------------
+async def stream_agent_with_tts(
+    session_id: str,
+    user_message: str,
+    image_uris: list[str] | None = None,
+) -> AsyncIterator[dict]:
+    """
+    Stream agent response with interleaved sentence-level TTS audio.
+
+    Runs agent text streaming and TTS audio streaming concurrently via
+    asyncio tasks.  As soon as the agent produces a complete sentence,
+    it is sent to ElevenLabs for TTS while the agent continues generating
+    text.  The caller receives interleaved agent_delta / audio_delta events
+    from a shared queue, followed by agent_done and tts_done.
+
+    Always emits tts_done so the client can rely on it for status lifecycle.
+    """
+    event_queue: asyncio.Queue[dict | None] = asyncio.Queue()
+    sentence_queue: asyncio.Queue[str | None] = asyncio.Queue()
+
+    async def agent_worker() -> None:
+        full_response = ""
+        sentence_buffer = ""
+
+        try:
+            async for delta in get_strands_agent_service().stream_response(
+                session_id=session_id,
+                user_message=user_message,
+                image_uris=image_uris,
+            ):
+                if session_manager.is_interrupted(session_id):
+                    break
+
+                full_response += delta
+                await event_queue.put(
+                    {"event": "agent_delta", "data": json.dumps({"text": delta})}
+                )
+
+                # Accumulate text and extract complete sentences for TTS
+                sentence_buffer += delta
+                sentences, sentence_buffer = extract_sentences(sentence_buffer)
+                for sentence in sentences:
+                    clean = clean_for_tts(sentence)
+                    if clean:
+                        await sentence_queue.put(clean)
+
+        except Exception as e:
+            tb = traceback.format_exc()
+            print(f"[Agent Error]\n{tb}", flush=True)
+            await event_queue.put(
+                {
+                    "event": "error",
+                    "data": json.dumps({"message": f"{type(e).__name__}: {e}"}),
+                }
+            )
+
+        await event_queue.put(
+            {"event": "agent_done", "data": json.dumps({"text": full_response})}
+        )
+
+        # Flush remaining sentence buffer to TTS
+        remaining = clean_for_tts(sentence_buffer.strip())
+        if remaining:
+            await sentence_queue.put(remaining)
+        await sentence_queue.put(None)  # signal TTS worker to stop
+
+    async def tts_worker() -> None:
+        has_tts = bool(os.environ.get("ELEVENLABS_API_KEY"))
+
+        while True:
+            sentence = await sentence_queue.get()
+            if sentence is None:
+                break
+            if not has_tts:
+                continue
+
+            try:
+                async for chunk in stream_tts(sentence):
+                    if session_manager.is_interrupted(session_id):
+                        break
+                    audio_b64 = base64.b64encode(chunk).decode("ascii")
+                    await event_queue.put(
+                        {"event": "audio_delta", "data": json.dumps({"audio": audio_b64})}
+                    )
+            except Exception as e:
+                print(f"[TTS Error] {e}", flush=True)
+
+        # Always emit tts_done so the client can transition to idle
+        await event_queue.put({"event": "tts_done", "data": json.dumps({})})
+        await event_queue.put(None)  # signal output consumer to stop
+
+    # Emit agent_start before kicking off workers
+    yield {"event": "agent_start", "data": json.dumps({})}
+
+    agent_task = asyncio.create_task(agent_worker())
+    tts_task = asyncio.create_task(tts_worker())
+
+    # Consume interleaved events from both workers
+    while True:
+        item = await event_queue.get()
+        if item is None:
+            break
+        yield item
+
+    await asyncio.gather(agent_task, tts_task, return_exceptions=True)
+
+
+# ---------------------------------------------------------------------------
 # REST Endpoints
 # ---------------------------------------------------------------------------
 @app.post("/api/session", response_model=SessionResponse)
@@ -177,46 +288,12 @@ async def send_message(
         raise HTTPException(status_code=403, detail=str(e))
 
     async def generate_events() -> AsyncIterator[dict]:
-        yield {"event": "agent_start", "data": json.dumps({})}
-
-        full_response = ""
-        try:
-            async for delta in get_strands_agent_service().stream_response(
-                session_id=request.session_id,
-                user_message=request.text,
-                image_uris=request.image_uris,
-            ):
-                # Check for interrupt
-                if session_manager.is_interrupted(request.session_id):
-                    break
-
-                full_response += delta
-                yield {"event": "agent_delta", "data": json.dumps({"text": delta})}
-
-        except Exception as e:
-            tb = traceback.format_exc()
-            print(f"[Agent Error]\n{tb}", flush=True)
-            yield {
-                "event": "error",
-                "data": json.dumps({"message": f"{type(e).__name__}: {e}"}),
-            }
-
-        yield {"event": "agent_done", "data": json.dumps({"text": full_response})}
-
-        # Stream TTS audio if response is non-empty
-        if full_response.strip() and os.environ.get("ELEVENLABS_API_KEY"):
-            try:
-                async for chunk in stream_tts(full_response):
-                    if session_manager.is_interrupted(request.session_id):
-                        break
-                    audio_b64 = base64.b64encode(chunk).decode("ascii")
-                    yield {
-                        "event": "audio_delta",
-                        "data": json.dumps({"audio": audio_b64}),
-                    }
-            except Exception as e:
-                print(f"[TTS Error] {e}", flush=True)
-            yield {"event": "tts_done", "data": json.dumps({})}
+        async for event in stream_agent_with_tts(
+            session_id=request.session_id,
+            user_message=request.text,
+            image_uris=request.image_uris,
+        ):
+            yield event
 
     return EventSourceResponse(generate_events())
 
@@ -355,7 +432,7 @@ async def ws_audio(websocket: WebSocket):
                     await ws_send(websocket, "recording", {"status": "started"})
 
                 elif msg_type == "stop":
-                    # Stop recording, transcribe, run agent
+                    # Stop recording, transcribe, run agent + TTS
                     await ws_send(websocket, "recording", {"status": "stopped"})
                     await ws_send(websocket, "transcribing", {})
 
@@ -364,42 +441,13 @@ async def ws_audio(websocket: WebSocket):
                     if transcript:
                         await ws_send(websocket, "transcript", {"text": transcript})
 
-                        # Stream agent response
-                        await ws_send(websocket, "agent_start", {})
-                        full_response = ""
-
-                        try:
-                            async for delta in get_strands_agent_service().stream_response(
-                                session_id=session_id,
-                                user_message=transcript,
-                            ):
-                                if session_manager.is_interrupted(session_id):
-                                    break
-                                full_response += delta
-                                await ws_send(websocket, "agent_delta", {"text": delta})
-
-                        except Exception as e:
-                            tb = traceback.format_exc()
-                            print(f"[Agent Error]\n{tb}", flush=True)
-                            await ws_send(
-                                websocket,
-                                "error",
-                                {"message": f"Agent error: {type(e).__name__}: {e}"},
-                            )
-
-                        await ws_send(websocket, "agent_done", {"text": full_response})
-
-                        # Stream TTS audio
-                        if full_response.strip() and os.environ.get("ELEVENLABS_API_KEY"):
-                            try:
-                                async for chunk in stream_tts(full_response):
-                                    if session_manager.is_interrupted(session_id):
-                                        break
-                                    audio_b64 = base64.b64encode(chunk).decode("ascii")
-                                    await ws_send(websocket, "audio_delta", {"audio": audio_b64})
-                            except Exception as e:
-                                print(f"[TTS Error] {e}", flush=True)
-                            await ws_send(websocket, "tts_done", {})
+                        # Stream agent response with interleaved TTS
+                        async for event in stream_agent_with_tts(
+                            session_id=session_id,
+                            user_message=transcript,
+                        ):
+                            event_data = json.loads(event["data"])
+                            await ws_send(websocket, event["event"], event_data)
                     else:
                         await ws_send(websocket, "transcript", {"text": ""})
 

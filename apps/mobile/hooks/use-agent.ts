@@ -12,7 +12,7 @@ import { useAudioPlayback } from './use-audio-playback';
 import * as api from './api-client';
 import type { Message, Attachment } from '@/components/chat/types';
 
-export type AgentStatus = 'idle' | 'recording' | 'transcribing' | 'responding';
+export type AgentStatus = 'idle' | 'recording' | 'transcribing' | 'responding' | 'speaking';
 
 export function useAgent() {
   const [messages, setMessages] = useState<Message[]>([]);
@@ -105,7 +105,8 @@ export function useAgent() {
 
         case 'agent_done': {
           const fullText = event.data.text as string;
-          setStatus('idle');
+          // Transition to 'speaking' — tts_done will set 'idle'
+          setStatus('speaking');
           setMessages((prev) => {
             const updated = [...prev];
             for (let i = updated.length - 1; i >= 0; i--) {
@@ -123,6 +124,10 @@ export function useAgent() {
           });
           break;
         }
+
+        case 'tts_done':
+          setStatus('idle');
+          break;
 
         case 'history': {
           const turns = event.data.turns as Array<{
