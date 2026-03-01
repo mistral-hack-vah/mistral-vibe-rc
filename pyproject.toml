@@ -14,7 +14,11 @@ dependencies = [
     "uvicorn>=0.34.0",
     "websockets>=13.0",
     "pyaudio>=0.2.14",
-    "simple-acp-client>=0.1.6",
+    "sse-starlette>=1.6.0",
+    "python-dotenv>=1.0.0",
+    "python-multipart>=0.0.6",
+    "strands-agents[mistral]>=0.1.0",
+    "strands-agents-tools>=0.1.0",
 ]
 
 [tool.pytest.ini_options]

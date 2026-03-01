@@ -1,183 +1,120 @@
 # python/audio_processor.py
 """
-Real-time audio processor backed by Mistral's Voxtral Realtime API.
+Push-to-talk audio processor backed by Mistral's Voxtral API.
 
-Pipeline per audio chunk received from the mobile app:
-  1. Energy VAD  — decide if voice is active (lightweight, local)
-  2. Buffer      — accumulate PCM16 bytes for the current utterance
-  3. Partial     — periodically call Voxtral with the rolling buffer tail
-                   to emit low-latency partial transcripts
-  4. Final       — when silence exceeds threshold, flush the full utterance
-                   to Voxtral for a high-accuracy final transcript
+Simple buffering model:
+  1. start_recording() - Begin buffering audio
+  2. append_audio()    - Add audio chunks to buffer
+  3. stop_and_transcribe() - Stop recording, transcribe, return text
 
-All Voxtral API calls go to `client.audio.transcriptions.complete_async`.
-No local model weights are downloaded.
+No VAD - user explicitly controls recording start/stop.
 """
 
-import asyncio
 import io
 import os
-import time
 import wave
-from dataclasses import dataclass, field
-from typing import Dict, Optional
+from typing import Optional
 
-import numpy as np
 from mistralai import Mistral
 
 
-# ---------------------------------------------------------------------------
-# Session state
-# ---------------------------------------------------------------------------
-
-@dataclass
-class SessionState:
-    """Mutable per-session buffer and VAD state."""
-
-    # Accumulated PCM16 bytes for the current utterance
-    utterance_bytes: bytearray = field(default_factory=bytearray)
-
-    # Simple energy VAD state
-    in_speech: bool = False
-    last_voice_ts: float = 0.0
-
-    # Throttle partial decode calls
-    last_partial_ts: float = 0.0
-    last_partial_text: str = ""
-
-
-# ---------------------------------------------------------------------------
-# Voxtral Audio Processor
-# ---------------------------------------------------------------------------
-
-class VoxtralAudioProcessor:
+class PushToTalkProcessor:
     """
-    Drop-in replacement for the old Whisper-based AudioProcessor.
-    Identical external interface: process_audio / reset / finalize.
+    Simple push-to-talk audio processor.
+
+    Buffers PCM16 audio until user explicitly stops recording,
+    then transcribes the entire buffer via Voxtral.
 
     Config via env vars:
         MISTRAL_API_KEY     — required
-        VOXTRAL_MODEL       — default: voxtral-mini-transcribe
+        VOXTRAL_MODEL       — default: voxtral-mini-2602
     """
 
     def __init__(
         self,
         sample_rate: int = 16_000,
-        vad_energy_threshold: float = 0.015,   # tune per microphone/env
-        silence_ms_to_finalize: int = 700,     # ms of silence → end utterance
-        partial_interval_ms: int = 400,        # min ms between partial decodes
-        partial_window_sec: float = 2.5,       # rolling tail sent for partial
-        language: Optional[str] = None,        # e.g. "en" — None = auto-detect
+        language: Optional[str] = None,
     ):
         self.sample_rate = sample_rate
-        self.vad_energy_threshold = vad_energy_threshold
-        self.silence_ms_to_finalize = silence_ms_to_finalize
-        self.partial_interval_ms = partial_interval_ms
-        self.partial_window_sec = partial_window_sec
         self.language = language
-
-        # bytes per second for PCM16 mono 16 kHz
-        self.bytes_per_second = sample_rate * 2
 
         api_key = os.environ.get("MISTRAL_API_KEY")
         if not api_key:
             raise RuntimeError("MISTRAL_API_KEY environment variable is not set.")
 
-        self.model = os.environ.get("VOXTRAL_MODEL", "voxtral-mini-2602")    # for realtime we have voxtral-mini-transcribe-realtime-2602
+        self.model = os.environ.get("VOXTRAL_MODEL", "voxtral-mini-2602")
         self._client = Mistral(api_key=api_key)
 
-        # session_id → SessionState
-        self._sessions: Dict[str, SessionState] = {}
+        # session_id -> audio buffer (bytearray)
+        self._buffers: dict[str, bytearray] = {}
+        # session_id -> recording state
+        self._recording: dict[str, bool] = {}
 
-    # ------------------------------------------------------------------
-    # Public interface (same as the old AudioProcessor)
-    # ------------------------------------------------------------------
+    def start_recording(self, session_id: str) -> None:
+        """Begin recording for a session. Clears any existing buffer."""
+        self._buffers[session_id] = bytearray()
+        self._recording[session_id] = True
 
-    def reset(self, session_id: str) -> None:
-        """Discard all buffered audio and VAD state for this session."""
-        self._sessions.pop(session_id, None)
+    def is_recording(self, session_id: str) -> bool:
+        """Check if a session is currently recording."""
+        return self._recording.get(session_id, False)
 
-    async def finalize(self, session_id: str) -> Optional[str]:
-        """Force-flush any buffered audio and return final transcript."""
-        st = self._sessions.get(session_id)
-        if not st or not st.utterance_bytes:
-            return None
-        text = await self._transcribe(bytes(st.utterance_bytes))
-        self.reset(session_id)
-        return text.strip() if text else None
-
-    async def process_audio(
-        self, audio_chunk: bytes, session_id: str
-    ) -> Dict[str, Optional[str]]:
+    def append_audio(self, session_id: str, chunk: bytes) -> None:
         """
-        Process one binary audio chunk (PCM16 mono 16 kHz).
+        Append audio chunk to the session buffer.
+
+        Args:
+            session_id: The session ID
+            chunk: Raw PCM16 mono 16kHz audio bytes
+        """
+        if session_id not in self._buffers:
+            # Auto-start if not already recording
+            self._buffers[session_id] = bytearray()
+            self._recording[session_id] = True
+
+        self._buffers[session_id].extend(chunk)
+
+    async def stop_and_transcribe(self, session_id: str) -> str:
+        """
+        Stop recording and transcribe the buffered audio.
+
+        Args:
+            session_id: The session ID
 
         Returns:
-            {"partial": str | None, "final": str | None}
+            Transcribed text, or empty string if no audio buffered.
         """
-        st = self._get_state(session_id)
-        now = time.time()
+        self._recording[session_id] = False
 
-        # ---- Energy VAD (fast, no network)
-        pcm_f32 = np.frombuffer(audio_chunk, dtype=np.int16).astype(np.float32) / 32768.0
-        rms = float(np.sqrt(np.mean(np.square(pcm_f32))) + 1e-12)
-        is_voice = rms >= self.vad_energy_threshold
+        if session_id not in self._buffers:
+            return ""
 
-        partial_out: Optional[str] = None
-        final_out: Optional[str] = None
+        audio_bytes = bytes(self._buffers.pop(session_id))
+        if not audio_bytes:
+            return ""
 
-        if is_voice:
-            st.last_voice_ts = now
-            st.in_speech = True
-            st.utterance_bytes.extend(audio_chunk)
+        return await self._transcribe(audio_bytes)
 
-            # Throttled partial decode — only every partial_interval_ms
-            elapsed_ms = (now - st.last_partial_ts) * 1000.0
-            if elapsed_ms >= self.partial_interval_ms:
-                st.last_partial_ts = now
-                window = self._tail_bytes(st.utterance_bytes, self.partial_window_sec)
-                text = await self._transcribe(window)
-                text = (text or "").strip()
-                if text and text != st.last_partial_text:
-                    st.last_partial_text = text
-                    partial_out = text
+    def cancel_recording(self, session_id: str) -> None:
+        """Cancel recording and discard buffered audio."""
+        self._buffers.pop(session_id, None)
+        self._recording[session_id] = False
 
-        else:
-            if st.in_speech:
-                silent_ms = (now - st.last_voice_ts) * 1000.0
-                if silent_ms >= self.silence_ms_to_finalize:
-                    text = await self._transcribe(bytes(st.utterance_bytes))
-                    text = (text or "").strip()
-                    if text:
-                        final_out = text
-                    # Clear utterance
-                    st.utterance_bytes.clear()
-                    st.in_speech = False
-                    st.last_partial_text = ""
-
-        return {"partial": partial_out, "final": final_out}
-
-    # ------------------------------------------------------------------
-    # Internals
-    # ------------------------------------------------------------------
-
-    def _get_state(self, session_id: str) -> SessionState:
-        if session_id not in self._sessions:
-            self._sessions[session_id] = SessionState()
-        return self._sessions[session_id]
-
-    def _tail_bytes(self, buf: bytearray, seconds: float) -> bytes:
-        max_len = int(self.bytes_per_second * seconds)
-        if len(buf) <= max_len:
-            return bytes(buf)
-        return bytes(buf[-max_len:])
+    def get_buffer_duration_ms(self, session_id: str) -> int:
+        """Get the duration of buffered audio in milliseconds."""
+        buf = self._buffers.get(session_id)
+        if not buf:
+            return 0
+        # PCM16 mono: 2 bytes per sample
+        num_samples = len(buf) // 2
+        duration_sec = num_samples / self.sample_rate
+        return int(duration_sec * 1000)
 
     async def _transcribe(self, pcm16_bytes: bytes) -> str:
         """
-        Send PCM16 bytes to Voxtral via the mistralai SDK.
+        Send PCM16 bytes to Voxtral for transcription.
 
-        The SDK expects an audio file-like object. We wrap the raw PCM16
-        in a minimal WAV container so Voxtral can decode the format correctly.
+        Wraps raw PCM16 in a WAV container for the API.
         """
         if not pcm16_bytes:
             return ""
@@ -185,20 +122,16 @@ class VoxtralAudioProcessor:
         wav_bytes = self._pcm16_to_wav(pcm16_bytes)
 
         try:
-            # Use the correct SDK signature: client.audio.transcriptions.complete_async
-            # with the file parameter as a dictionary containing 'file_name' and 'content'.
             response = await self._client.audio.transcriptions.complete_async(
                 model=self.model,
                 file={
                     "file_name": "audio.wav",
                     "content": wav_bytes,
                 },
-                **( {"language": self.language} if self.language else {} ),
+                **({"language": self.language} if self.language else {}),
             )
-            # TranscriptionResponse has a .text attribute as str
-            return response.text or ""
+            return (response.text or "").strip()
         except Exception as e:
-            # Log or handle API errors gracefully in the stream
             print(f"[Voxtral API Error] {e}")
             return ""
 
@@ -206,14 +139,13 @@ class VoxtralAudioProcessor:
         """Wrap raw PCM16 mono 16 kHz bytes in a WAV container."""
         buf = io.BytesIO()
         with wave.open(buf, "wb") as wf:
-            wf.setnchannels(1)           # mono
-            wf.setsampwidth(2)           # 16-bit = 2 bytes
+            wf.setnchannels(1)
+            wf.setsampwidth(2)
             wf.setframerate(self.sample_rate)
             wf.writeframes(pcm16_bytes)
         return buf.getvalue()
 
 
-# ---------------------------------------------------------------------------
-# Backwards-compat alias so any code that imports AudioProcessor still works
-# ---------------------------------------------------------------------------
-AudioProcessor = VoxtralAudioProcessor
+# Backwards compatibility aliases
+VoxtralAudioProcessor = PushToTalkProcessor
+AudioProcessor = PushToTalkProcessor
